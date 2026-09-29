@@ -28,6 +28,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from collections import Counter
+from math import log
 from pathlib import Path
 
 PROTOCOL_VERSION = "2025-06-18"
@@ -188,8 +189,12 @@ def chercher_sources(args):
     return dict(total=data.get("total", 0), renvoye=len(items), sources=items)
 
 
-def _hit_windows(segments, needles, context=1, per_source=6):
-    """Repère les segments contenant un mot-clé et rend la fenêtre autour."""
+def _hit_windows(segments, needles, context=1, per_source=6, strong=None, weights=None):
+    """Repère les segments contenant un mot-clé et rend la fenêtre autour.
+
+    ``strong`` limite aux passages qui contiennent au moins un mot discriminant ;
+    ``weights`` (idf) classe les passages du plus pertinent au moins pertinent.
+    """
     hits = [i for i, seg in enumerate(segments) if any(n in folded(seg.get("text", "")) for n in needles)]
     windows, used = [], set()
     for index in hits:
@@ -197,17 +202,23 @@ def _hit_windows(segments, needles, context=1, per_source=6):
         end = min(len(segments) - 1, index + context)
         if any(i in used for i in range(start, end + 1)):
             continue
+        text = " ".join(s.get("text", "").strip() for s in segments[start:end + 1])
+        found = [n for n in needles if n in folded(text)]
+        if strong and not set(found) & strong:
+            continue
         used.update(range(start, end + 1))
+        score = sum(weights.get(n, 1.0) for n in found) if weights else float(len(found))
         windows.append(dict(
             debut=stamp(segments[start].get("start", 0)),
             start=segments[start].get("start", 0),
             page=segments[start].get("page"),
             section=segments[start].get("section"),
-            texte=clip(" ".join(s.get("text", "").strip() for s in segments[start:end + 1]), 1800),
+            mots=found,
+            score=round(score, 3),
+            texte=clip(text, 1800),
         ))
-        if len(windows) >= per_source:
-            break
-    return windows
+    windows.sort(key=lambda w: (-w["score"], w["start"]))
+    return windows[:per_source]
 
 
 def chercher_passages(args):
@@ -218,15 +229,32 @@ def chercher_passages(args):
     needles = terms_of(question) or [folded(question)]
     limite = max(1, min(20, int(args.get("limite") or 6)))
     sources_max = max(1, min(30, int(args.get("sources_max") or 12)))
+    transcription_total = api.call(
+        "GET", "/api/v1/sources", {"limit": 1, "has_transcript": "true"}).get("total", 0)
 
-    candidates, catalogue = [], {}
-    for needle in needles[:4]:
+    # Le corpus sert de référence : un mot présent partout (« comment », « quand ») ne discrimine
+    # rien et ramènerait du bruit. L'API renvoie, pour chaque mot, le nombre de sources qui le
+    # contiennent : c'est la fréquence documentaire, donc des poids idf exploitables.
+    candidates, catalogue, frequencies = [], {}, {}
+    for needle in needles[:6]:
         page = api.call("GET", "/api/v1/sources",
                         {"q": needle, "has_transcript": "true", "limit": 200})
+        frequencies[needle] = page.get("total", 0)
         for s in page.get("items", []):
             catalogue[s["id"]] = s
             candidates.append(s["id"])
+    total = max(1, transcription_total or len(catalogue))
+    # df = 0 est un artefact : la recherche de l'API est sensible aux accents (« debute » ne
+    # trouve pas « débutes ») alors que la nôtre ne l'est pas. Un tel mot n'est pas un
+    # discriminant fiable : poids faible, et il ne peut pas servir de filtre à lui seul.
+    weights = {t: (round(log(1 + total / (1 + df)), 3) if df else 0.5)
+               for t, df in frequencies.items()}
+    strong = {t for t, df in frequencies.items() if 0 < df <= 0.35 * total}
     ranked = [sid for sid, _ in Counter(candidates).most_common(sources_max)]
+    if not strong:
+        # Aucun mot ne filtre utilement : on garde les mots les plus rares plutôt que rien.
+        ranked_terms = sorted((t for t in frequencies if frequencies[t]), key=lambda t: frequencies[t])
+        strong = set(ranked_terms[:1]) or set(frequencies)
 
     found = []
     for sid in ranked:
@@ -235,24 +263,25 @@ def chercher_passages(args):
             transcript = api.call("GET", "/api/v1/sources/%s/transcript" % sid)
         except ApiError:
             continue
-        windows = _hit_windows(transcript.get("segments", []), needles)
+        windows = _hit_windows(transcript.get("segments", []), needles, per_source=6,
+                               strong=strong, weights=weights)
         if not windows:
             continue
         found.append(dict(
             source_id=sid, titre=meta["title"], auteur=meta.get("author", ""),
             format=meta.get("kind", ""), date=meta.get("date", ""), url=meta.get("url", ""),
-            passages=windows,
+            duree=stamp(meta.get("duration", 0)), passages=windows,
         ))
-        if len(found) >= limite:
-            break
-    for item in found:
-        item["duree"] = stamp(next(
-            (s.get("duration") for s in [catalogue[item["source_id"]]]), 0))
+    found.sort(key=lambda item: -item["passages"][0]["score"])
+    found = found[:limite]
     return dict(
-        requete=question, mots_cles=needles, sources_candidates=len(catalogue),
+        requete=question, mots_cles=needles,
+        frequences_sources={t: frequencies.get(t, 0) for t in needles},
+        mots_discriminants=sorted(strong), sources_candidates=len(catalogue),
         sources_avec_passages=len(found), resultats=found,
-        note="Passages bruts : citez l'auteur, le titre et l'horodatage dans toute réponse.",
+        note="Passages bruts, classés par pertinence : citez l'auteur, le titre et l'horodatage.",
     )
+
 
 
 def lire_source(args):
