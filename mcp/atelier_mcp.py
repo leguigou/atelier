@@ -12,6 +12,11 @@ Deux transports, même code métier :
   HTTP (--http)   Streamable HTTP pour un client distant (ChatGPT, Claude web…),
                   protégé par un jeton Bearer (MCP_HTTP_TOKEN)
 
+En mode HTTP, le serveur fait aussi office de serveur d'autorisation OAuth 2.1 minimal :
+l'interface des connecteurs ChatGPT n'accepte qu'« OAuth » ou « aucune authentification »,
+jamais un en-tête de clé. Le jeton Bearer statique reste accepté : les autres clients ne
+changent rien. Le consentement se donne sur /authorize, en saisissant le même MCP_HTTP_TOKEN.
+
 Configuration (variables d'environnement) :
   ATELIER_BASE           URL de l'Atelier (défaut : http://127.0.0.1:8765)
   ATELIER_FALLBACK_BASE  seconde URL essayée si la première est injoignable
@@ -21,23 +26,30 @@ Configuration (variables d'environnement) :
   MCP_HTTP_TOKEN         jeton Bearer exigé en mode HTTP (vide = aucune authentification)
   MCP_HTTP_PORT          port d'écoute en mode HTTP (défaut 8080)
   MCP_READ_ONLY=1        n'expose que les outils de lecture (écriture masquée)
+  MCP_OAUTH_STORE        fichier d'état OAuth (défaut : à côté du script ; /data en conteneur)
+  MCP_PUBLIC_URL         URL publique du serveur (défaut : déduite de l'en-tête Host)
 
 Lancer : python3 atelier_mcp.py            (mode serveur MCP sur stdin/stdout)
          python3 atelier_mcp.py --http     (mode Streamable HTTP sur /mcp)
          python3 atelier_mcp.py --selftest (vérifie l'API sans client MCP)
          python3 atelier_mcp.py --tools    (liste les outils, sans réseau)
 """
+import base64
+import hashlib
 import json
 import os
 import re
 import secrets
 import sys
+import threading
+import time
 import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
 from collections import Counter
+from html import escape as html_escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from math import log
 from pathlib import Path
@@ -60,6 +72,12 @@ HTTP_TOKEN = os.environ.get("MCP_HTTP_TOKEN", "").strip()
 HTTP_PORT = int(os.environ.get("MCP_HTTP_PORT", "8080"))
 HTTP_HOST = os.environ.get("MCP_HTTP_HOST", "0.0.0.0")
 READ_ONLY = os.environ.get("MCP_READ_ONLY", "").strip().lower() in ("1", "true", "oui", "yes")
+# OAuth 2.1 : état des clients, codes et jetons (voir « OAuth » plus bas dans le fichier).
+OAUTH_STORE = Path(os.environ.get("MCP_OAUTH_STORE") or Path(__file__).with_name("oauth-store.json"))
+OAUTH_PUBLIC_URL = os.environ.get("MCP_PUBLIC_URL", "").strip().rstrip("/")
+OAUTH_ACCESS_TTL = int(os.environ.get("MCP_OAUTH_ACCESS_TTL") or 30 * 24 * 3600)
+OAUTH_REFRESH_TTL = int(os.environ.get("MCP_OAUTH_REFRESH_TTL") or 120 * 24 * 3600)
+OAUTH_CODE_TTL = 300  # un code d'autorisation vit cinq minutes
 # Outils qui modifient la bibliothèque — masqués quand READ_ONLY est actif.
 WRITE_TOOLS = frozenset({
     "modifier_idees",
@@ -901,6 +919,95 @@ def serve():
 # --------------------------------------------------------------------------- HTTP
 
 
+# ──────────────────────────────────── OAuth 2.1 ────────────────────────────────────
+# L'interface des connecteurs ChatGPT n'offre que « OAuth » ou « aucune authentification » :
+# aucun champ pour un en-tête de clé. Le serveur se comporte donc aussi comme serveur
+# d'autorisation : métadonnées de découverte, enregistrement dynamique du client, page de
+# consentement (le MCP_HTTP_TOKEN y sert de secret), puis code + PKCE S256. Un seul fichier,
+# aucune dépendance. Le jeton Bearer statique reste accepté pour les autres clients.
+
+_OAUTH_LOCK = threading.Lock()
+AUTH_PAGE = """<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Autoriser {{client}} — Atelier</title>
+<style>
+body{margin:0;font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;background:#f6f5f0;color:#253e33;display:grid;place-items:center;min-height:100vh}
+main{box-sizing:border-box;background:#fff;border:1px solid #e2e0d6;border-radius:14px;padding:28px;max-width:470px;width:calc(100% - 32px);box-shadow:0 12px 30px rgba(37,62,51,.08)}
+h1{margin:0 0 6px;font-size:20px}
+p.sub{margin:0 0 14px;color:#5d6d64;font-size:14px}
+label{display:block;margin:16px 0 6px;font-size:13px;font-weight:600}
+input[type=password]{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #d8d6cc;border-radius:9px;font-size:15px;background:#fdfcf9}
+button{margin-top:16px;width:100%;padding:11px;border:0;border-radius:9px;background:#253e33;color:#fff;font-size:15px;cursor:pointer}
+p.err{margin:14px 0 0;padding:10px 12px;border-radius:9px;background:#fdf1ee;color:#8c3b22;font-size:14px}
+p.foot{margin:14px 0 0;color:#7a8880;font-size:12px}
+</style></head><body><main>
+<h1>Autoriser l’accès à votre Atelier</h1>
+<p class="sub"><strong>{{client}}</strong> demande à se connecter à ce serveur MCP ({{redirect}}).</p>
+<p class="sub">Saisissez le jeton du serveur MCP : il est vérifié ici, sur votre serveur, et n’est jamais transmis à {{client}}.</p>
+{{error}}
+<form method="post" action="/authorize">{{hidden}}
+<label for="token">Jeton du serveur MCP</label>
+<input id="token" name="token" type="password" autocomplete="off" autofocus required>
+<button type="submit">Autoriser</button>
+</form>
+<p class="foot">Pour refuser, fermez simplement cet onglet : rien ne sera partagé.</p>
+</main></body></html>
+"""
+
+
+def oauth_load():
+    """État OAuth : clients enregistrés, codes en cours, jetons émis."""
+    try:
+        data = json.loads(OAUTH_STORE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    return {"clients": data.get("clients") or {}, "codes": data.get("codes") or {},
+            "tokens": data.get("tokens") or {}, "refresh": data.get("refresh") or {}}
+
+
+def oauth_save(data):
+    try:
+        OAUTH_STORE.parent.mkdir(parents=True, exist_ok=True)
+        temporary = OAUTH_STORE.with_suffix(".tmp")
+        temporary.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(OAUTH_STORE)
+    except OSError as error:
+        sys.stderr.write("atelier-mcp : état OAuth non écrit (%s)\n" % error)
+
+
+def oauth_purge(data, now):
+    """Retire codes, jetons et refresh expirés."""
+    for bucket in ("codes", "tokens", "refresh"):
+        data[bucket] = {key: value for key, value in data[bucket].items()
+                        if float(value.get("expires") or 0) > now}
+
+
+def oauth_access_valid(value):
+    """Vrai si le jeton présenté est un jeton d'accès OAuth encore valide."""
+    if not value:
+        return False
+    now = time.time()
+    with _OAUTH_LOCK:
+        data = oauth_load()
+        oauth_purge(data, now)
+        valid = any(secrets.compare_digest(key, value) for key in data["tokens"])
+        oauth_save(data)
+    return valid
+
+
+def oauth_base(handler):
+    """URL publique du serveur : MCP_PUBLIC_URL, sinon déduite de la requête (derrière un proxy)."""
+    if OAUTH_PUBLIC_URL:
+        return OAUTH_PUBLIC_URL
+    forwarded = (handler.headers.get("X-Forwarded-Host") or "").split(",")[0].strip()
+    host = (forwarded or handler.headers.get("Host") or "").split(",")[0].strip()
+    if not host:
+        return ""
+    scheme = (handler.headers.get("X-Forwarded-Proto") or "").split(",")[0].strip()
+    # Derrière un proxy : https par défaut. En direct (tests, local) : http.
+    return "%s://%s" % (scheme or ("https" if forwarded else "http"), host)
+
+
 class McpHttpHandler(BaseHTTPRequestHandler):
     """Transport Streamable HTTP, sans session — pour les clients distants."""
 
@@ -916,7 +1023,225 @@ class McpHttpHandler(BaseHTTPRequestHandler):
             return True
         header = self.headers.get("Authorization", "").strip()
         value = header[7:].strip() if header[:7].lower() == "bearer " else header
-        return bool(value) and secrets.compare_digest(value, HTTP_TOKEN)
+        if value and secrets.compare_digest(value, HTTP_TOKEN):
+            return True
+        # Jeton issu du flux OAuth (ChatGPT et autres clients hébergés).
+        return oauth_access_valid(value)
+
+    # ─────────────── OAuth 2.1 : métadonnées, enregistrement, consentement, jetons ───────────────
+    def _read_body(self):
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        return self.rfile.read(length) if length else b""
+
+    def _protected_resource(self, base):
+        return {"resource": base + "/mcp", "resource_name": "Atelier des sources",
+                "authorization_servers": [base], "bearer_methods_supported": ["header"],
+                "scopes_supported": ["atelier"]}
+
+    def _authorization_server(self, base):
+        return {"issuer": base, "authorization_endpoint": base + "/authorize",
+                "token_endpoint": base + "/token", "registration_endpoint": base + "/register",
+                "response_types_supported": ["code"],
+                "grant_types_supported": ["authorization_code", "refresh_token"],
+                "token_endpoint_auth_methods_supported": ["none"],
+                "code_challenge_methods_supported": ["S256"], "scopes_supported": ["atelier"]}
+
+    def _authorize_page(self, params, error=""):
+        """Page de consentement : le client autorisé y saisit le jeton du serveur MCP."""
+        client_id = (params.get("client_id") or [""])[0]
+        redirect_uri = (params.get("redirect_uri") or [""])[0]
+        with _OAUTH_LOCK:
+            client = oauth_load()["clients"].get(client_id)
+        if not client:
+            return self._write(400, {"error": "invalid_client",
+                                     "error_description": "client_id inconnu : enregistrez le client avant d'autoriser"})
+        if redirect_uri not in client.get("redirect_uris", []):
+            return self._write(400, {"error": "invalid_request",
+                                     "error_description": "redirect_uri non déclarée par ce client"})
+        if (params.get("response_type") or [""])[0] != "code":
+            return self._write(400, {"error": "unsupported_response_type",
+                                     "error_description": "response_type=code attendu"})
+        if (params.get("code_challenge_method") or [""])[0] != "S256" or not (params.get("code_challenge") or [""])[0]:
+            return self._write(400, {"error": "invalid_request", "error_description": "PKCE S256 requis"})
+        hidden = "".join('<input type="hidden" name="%s" value="%s">' % (html_escape(name), html_escape(value))
+                         for name, values in params.items() if name != "token" for value in values)
+        name = str(client.get("client_name") or "un client")[:80]
+        site = urllib.parse.urlparse(redirect_uri).netloc or redirect_uri
+        page = (AUTH_PAGE.replace("{{client}}", html_escape(name))
+                        .replace("{{redirect}}", html_escape(site))
+                        .replace("{{hidden}}", hidden)
+                        .replace("{{error}}", error))
+        return self._write(200, page.encode("utf-8"), content_type="text/html; charset=utf-8",
+                           extra={"Cache-Control": "no-store"})
+
+    def _register(self):
+        """Enregistrement dynamique du client (RFC 7591) : ChatGPT s'annonce une fois."""
+        try:
+            payload = json.loads(self._read_body().decode("utf-8") or "{}")
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return self._write(400, {"error": "invalid_client_metadata", "error_description": "JSON invalide"})
+        uris = payload.get("redirect_uris") or []
+        if isinstance(uris, str):
+            uris = [uris]
+        uris = [uri for uri in uris if isinstance(uri, str) and uri.startswith(("https://", "http://"))]
+        if not uris:
+            return self._write(400, {"error": "invalid_redirect_uri", "error_description": "redirect_uris manquant"})
+        now = time.time()
+        client_id = "atc_" + secrets.token_urlsafe(24)
+        record = {"client_id": client_id, "client_name": str(payload.get("client_name") or "client MCP")[:80],
+                  "redirect_uris": uris, "created": now, "token_endpoint_auth_method": "none"}
+        with _OAUTH_LOCK:
+            data = oauth_load()
+            oauth_purge(data, now)
+            data["clients"][client_id] = record
+            oauth_save(data)
+        sys.stderr.write("atelier-mcp : client OAuth enregistré (%s)\n" % record["client_name"])
+        return self._write(201, {"client_id": client_id, "client_id_issued_at": int(now),
+                                 "client_name": record["client_name"], "redirect_uris": uris,
+                                 "token_endpoint_auth_method": "none",
+                                 "grant_types": ["authorization_code", "refresh_token"],
+                                 "response_types": ["code"]})
+
+    def _authorize_submit(self):
+        """Consentement donné : un code (cinq minutes) part vers le client, avec son state."""
+        try:
+            raw = self._read_body().decode("utf-8")
+        except UnicodeDecodeError:
+            return self._write(400, {"error": "invalid_request", "error_description": "encodage inattendu"})
+        params = urllib.parse.parse_qs(raw, keep_blank_values=True)
+        given = (params.pop("token", [""])[0] or "").strip()
+        client_id = (params.get("client_id") or [""])[0]
+        redirect_uri = (params.get("redirect_uri") or [""])[0]
+        with _OAUTH_LOCK:
+            client = oauth_load()["clients"].get(client_id)
+        if not client or redirect_uri not in client.get("redirect_uris", []):
+            return self._write(400, {"error": "invalid_request",
+                                     "error_description": "client ou redirect_uri inconnus"})
+        if HTTP_TOKEN and not secrets.compare_digest(given, HTTP_TOKEN):
+            sys.stderr.write("atelier-mcp : autorisation refusée (jeton incorrect)\n")
+            return self._authorize_page(params, error='<p class="err">Jeton incorrect. Réessayez.</p>')
+        challenge = (params.get("code_challenge") or [""])[0]
+        if ((params.get("response_type") or [""])[0] != "code"
+                or (params.get("code_challenge_method") or [""])[0] != "S256" or not challenge):
+            return self._write(400, {"error": "invalid_request", "error_description": "PKCE S256 requis"})
+        now = time.time()
+        code = secrets.token_urlsafe(32)
+        with _OAUTH_LOCK:
+            data = oauth_load()
+            oauth_purge(data, now)
+            data["codes"][code] = {"client_id": client_id, "redirect_uri": redirect_uri,
+                                   "code_challenge": challenge,
+                                   "scope": (params.get("scope") or ["atelier"])[0],
+                                   "expires": now + OAUTH_CODE_TTL}
+            oauth_save(data)
+        query = {"code": code}
+        state = (params.get("state") or [""])[0]
+        if state:
+            query["state"] = state
+        target = redirect_uri + ("&" if "?" in redirect_uri else "?") + urllib.parse.urlencode(query)
+        sys.stderr.write("atelier-mcp : autorisation accordée à %s\n" % client.get("client_name"))
+        self.send_response(302)
+        self.send_header("Location", target)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        self.close_connection = True
+
+    def _token(self):
+        """Échange code+PKCE (ou refresh) contre un jeton d'accès."""
+        try:
+            raw = self._read_body().decode("utf-8")
+        except UnicodeDecodeError:
+            raw = ""
+        form = urllib.parse.parse_qs(raw, keep_blank_values=True)
+
+        def field(name):
+            return (form.get(name) or [""])[0].strip()
+
+        grant, client_id, now = field("grant_type"), field("client_id"), time.time()
+        with _OAUTH_LOCK:
+            data = oauth_load()
+            oauth_purge(data, now)
+            client = data["clients"].get(client_id)
+            if not client:
+                return self._write(400, {"error": "invalid_client", "error_description": "client_id inconnu"})
+            if grant == "authorization_code":
+                code = field("code")
+                record = data["codes"].get(code)
+                verifier = field("code_verifier")
+                if (not record or record.get("client_id") != client_id
+                        or record.get("redirect_uri") != field("redirect_uri") or not verifier):
+                    oauth_save(data)
+                    return self._write(400, {"error": "invalid_grant",
+                                             "error_description": "code inconnu, déjà utilisé, expiré, ou redirect_uri différente"})
+                expected = base64.urlsafe_b64encode(
+                    hashlib.sha256(verifier.encode("ascii", "ignore")).digest()).rstrip(b"=").decode("ascii")
+                if not secrets.compare_digest(expected, str(record.get("code_challenge") or "")):
+                    # Le code n'est pas consommé : un client peut se tromper de code_verifier et réessayer.
+                    oauth_save(data)
+                    return self._write(400, {"error": "invalid_grant",
+                                             "error_description": "code_verifier ne correspond pas au défi PKCE"})
+                data["codes"].pop(code, None)
+                scope = record.get("scope") or "atelier"
+            elif grant == "refresh_token":
+                previous = data["refresh"].pop(field("refresh_token"), None)
+                if not previous or previous.get("client_id") != client_id:
+                    oauth_save(data)
+                    return self._write(400, {"error": "invalid_grant",
+                                             "error_description": "refresh_token inconnu ou expiré"})
+                scope = previous.get("scope") or "atelier"
+            else:
+                oauth_save(data)
+                return self._write(400, {"error": "unsupported_grant_type",
+                                         "error_description": "authorization_code ou refresh_token attendu"})
+            refresh = "atr_" + secrets.token_urlsafe(32)  # rotation à chaque usage
+            data["refresh"][refresh] = {"client_id": client_id, "expires": now + OAUTH_REFRESH_TTL, "scope": scope}
+            access = "ata_" + secrets.token_urlsafe(32)
+            data["tokens"][access] = {"client_id": client_id, "expires": now + OAUTH_ACCESS_TTL,
+                                      "refresh": refresh, "created": now}
+            oauth_save(data)
+        sys.stderr.write("atelier-mcp : jeton émis pour %s (%s)\n" % (client.get("client_name"), grant))
+        return self._write(200, {"access_token": access, "token_type": "Bearer",
+                                 "expires_in": OAUTH_ACCESS_TTL, "refresh_token": refresh, "scope": scope},
+                           extra={"Cache-Control": "no-store"})
+
+    def _oauth_get(self, path):
+        """Routes GET de la partie OAuth — True si la requête a été traitée."""
+        if path in ("/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"):
+            base = oauth_base(self)
+            if not base:
+                self._write(400, {"error": "invalid_request", "error_description": "hôte inconnu"})
+            else:
+                self._write(200, self._protected_resource(base), extra={"Cache-Control": "no-store"})
+            return True
+        if path in ("/.well-known/oauth-authorization-server", "/.well-known/oauth-authorization-server/mcp"):
+            base = oauth_base(self)
+            if not base:
+                self._write(400, {"error": "invalid_request", "error_description": "hôte inconnu"})
+            else:
+                self._write(200, self._authorization_server(base), extra={"Cache-Control": "no-store"})
+            return True
+        if path == "/authorize":
+            query = urllib.parse.urlparse(self.path).query
+            self._authorize_page(urllib.parse.parse_qs(query, keep_blank_values=True))
+            return True
+        return False
+
+    def _oauth_post(self, path):
+        """Routes POST de la partie OAuth — True si la requête a été traitée."""
+        if path == "/register":
+            self._register()
+            return True
+        if path == "/token":
+            self._token()
+            return True
+        if path == "/authorize":
+            self._authorize_submit()
+            return True
+        return False
 
     def _write(self, status, payload, content_type="application/json", extra=None, close=False):
         body = payload if isinstance(payload, bytes) else json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -936,15 +1261,23 @@ class McpHttpHandler(BaseHTTPRequestHandler):
         self._write(404, {"error": "chemin inconnu — utilisez POST /mcp"})
 
     def _unauthorized(self):
+        # `resource_metadata` (RFC 9728) : c'est ce qui indique au client où découvrir OAuth.
+        header = 'Bearer realm="atelier-mcp", scope="atelier"'
+        base = oauth_base(self)
+        if base:
+            header += ', resource_metadata="%s/.well-known/oauth-protected-resource"' % base
         self._write(401, {"jsonrpc": "2.0", "id": None,
                           "error": {"code": -32001, "message": "Jeton d'accès requis"}},
-                    extra={"WWW-Authenticate": 'Bearer realm="atelier-mcp"'})
+                    extra={"WWW-Authenticate": header})
 
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path
+        if self._oauth_get(path):
+            return
         if path == "/health":
             self._write(200, {"status": "ok", "server": SERVER_NAME, "version": SERVER_VERSION,
                               "outils": len(visible_tools()), "lecture_seule": READ_ONLY,
+                              "oauth": bool(HTTP_TOKEN), "clients_oauth": len(oauth_load()["clients"]),
                               "base": api.base or "à détecter"})
         elif path in ("/mcp", "/"):
             # Aucun flux serveur→client : 405, comme la spécification l'autorise.
@@ -959,7 +1292,10 @@ class McpHttpHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         global _SINK
-        if urllib.parse.urlparse(self.path).path not in ("/mcp", "/"):
+        path = urllib.parse.urlparse(self.path).path
+        if self._oauth_post(path):
+            return
+        if path not in ("/mcp", "/"):
             return self._unknown_path()
         if not self._authorized():
             return self._unauthorized()
@@ -999,6 +1335,9 @@ def serve_http():
     sys.stderr.write("atelier-mcp %s : HTTP prêt sur %s:%d/mcp (%d outils%s, base %s)\n"
                      % (SERVER_VERSION, HTTP_HOST, HTTP_PORT, len(visible_tools()),
                         ", lecture seule" if READ_ONLY else "", api.base or "à détecter"))
+    if HTTP_TOKEN:
+        sys.stderr.write("atelier-mcp : OAuth 2.1 actif (/authorize, /token, /register, "
+                         "/.well-known/oauth-*) — état : %s\n" % OAUTH_STORE)
     sys.stderr.flush()
     httpd.serve_forever()
 

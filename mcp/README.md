@@ -97,10 +97,42 @@ commun (voir le bloc commenté dans `docker-compose.yml`).
 
 ChatGPT ne se connecte qu'à des serveurs **distants en HTTPS**, et uniquement sur les offres
 payantes, dans le navigateur (pas l'application mobile). Réglages → **Applications /
-Connecteurs** → mode développeur → créer une app avec l'URL `https://…/mcp` et
-l'authentification **Token** = la valeur de `MCP_HTTP_TOKEN`. Le serveur doit donc être joignable
-depuis Internet : tunnel sortant (Cloudflare Tunnel, ngrok) ou machine publique, plus le proxy
-TLS ci-dessus. Même logique pour un connecteur Claude.
+Connecteurs** → mode développeur → créer une app avec l'URL `https://…/mcp` et l'authentification
+**OAuth**. L'interface n'offre que « OAuth » ou « aucune authentification » : il n'existe pas de
+champ pour un en-tête de clé. ChatGPT découvre alors les métadonnées publiées par le serveur,
+s'enregistre tout seul, ouvre la page `/authorize` **dans votre navigateur** — vous y saisissez
+`MCP_HTTP_TOKEN` pour consentir — puis échange le code contre un jeton d'accès (PKCE). Le serveur
+doit donc être joignable depuis Internet : tunnel sortant (Cloudflare Tunnel, ngrok) ou machine
+publique, plus le proxy TLS ci-dessus.
+
+### OAuth 2.1 (connecteurs hébergés)
+
+Le serveur fait aussi office de serveur d'autorisation : aucune dépendance, tout tient dans ce
+fichier. Ce qu'il publie :
+
+| Route | Rôle |
+|---|---|
+| `GET /.well-known/oauth-protected-resource` | métadonnées de la ressource (RFC 9728), visées par l'en-tête `WWW-Authenticate` du `401` |
+| `GET /.well-known/oauth-authorization-server` | métadonnées du serveur d'autorisation (RFC 8414) |
+| `POST /register` | enregistrement dynamique du client (RFC 7591) |
+| `GET /authorize` | page de consentement : le jeton du serveur y est demandé |
+| `POST /token` | code + PKCE `S256`, ou `refresh_token` (rotation à chaque usage) |
+
+Le jeton Bearer statique `MCP_HTTP_TOKEN` reste accepté en parallèle : Claude, le CLI et les
+clients qui savent poser un en-tête ne changent rien. Un jeton d'accès vit trente jours, un
+refresh cent vingt ; l'état est écrit dans `MCP_OAUTH_STORE` (sur un volume en conteneur) pour
+survivre à un redéploiement. Un code d'autorisation n'est consommé qu'à l'échange réussi : un
+`code_verifier` erroné peut être réessayé.
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `MCP_OAUTH_STORE` | `oauth-store.json` à côté du script | clients enregistrés, codes et jetons émis |
+| `MCP_PUBLIC_URL` | déduite de `Host` / `X-Forwarded-Host` | URL publique annoncée (derrière un proxy) |
+| `MCP_OAUTH_ACCESS_TTL` | `2592000` (30 jours) | durée de vie d'un jeton d'accès |
+| `MCP_OAUTH_REFRESH_TTL` | `10368000` (120 jours) | durée de vie d'un refresh |
+
+Révoquer tous les accès OAuth : vider la clé `tokens` de `MCP_OAUTH_STORE` puis redémarrer ; le
+jeton statique, lui, se change en modifiant `MCP_HTTP_TOKEN`.
 
 ## Déploiement (Dokploy)
 

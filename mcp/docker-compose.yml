@@ -17,12 +17,22 @@ services:
       - MCP_HTTP_TOKEN=${MCP_HTTP_TOKEN}
       # Optionnel : `1` n'expose que les 11 outils de consultation.
       - MCP_READ_ONLY=${MCP_READ_ONLY:-}
+      # OAuth 2.1 (connecteurs ChatGPT) : état des clients, codes et jetons, sur un volume
+      # pour survivre aux redéploiements. MCP_PUBLIC_URL est optionnel : sans lui, l'URL
+      # publique est déduite de l'en-tête Host (derrière le proxy).
+      - MCP_OAUTH_STORE=${MCP_OAUTH_STORE:-/data/oauth-store.json}
+      - MCP_PUBLIC_URL=${MCP_PUBLIC_URL:-}
+    volumes:
+      - atelier-mcp-data:/data
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4).status == 200 else 1)"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 5s
+
+volumes:
+  atelier-mcp-data:
 
 # Si le reverse proxy tourne dans un autre conteneur (Dokploy, Traefik partagé), décommenter
 # pour rejoindre son réseau : sinon il ne peut pas router vers ce service.
