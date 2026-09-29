@@ -1,0 +1,9 @@
+data/
+__pycache__/
+*.log
+.runtime/
+.env
+*.zip
+.local-config.json
+Acces-local.txt
+qa/

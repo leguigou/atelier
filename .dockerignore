@@ -1,0 +1,11 @@
+data
+__pycache__
+.env
+.git
+tests
+*.log
+*.zip
+.runtime
+.local-config.json
+Acces-local.txt
+qa

@@ -1,0 +1,28 @@
+services:
+  atelier:
+    build: .
+    expose:
+      - "8765"
+    environment:
+      APP_URL: ${APP_URL:?Indiquez le domaine HTTPS de l'atelier}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Definissez un mot de passe de 16 caracteres minimum}
+      ATELIER_ENCRYPTION_KEY: ${ATELIER_ENCRYPTION_KEY:?Generez une cle Fernet}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    volumes:
+      - atelier_data:/app/data
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+volumes:
+  atelier_data:

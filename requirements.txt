@@ -1,0 +1,9 @@
+cryptography>=46.0.0,<47
+waitress==3.0.2
+pypdf>=6,<7
+pypdfium2>=4.30,<6
+reportlab>=5,<6
+Pillow>=11,<13
+defusedxml==0.7.1
+youtube-transcript-api>=1.2,<2
+pillow-heif>=1,<2

@@ -1,0 +1,2 @@
+.tag-choices{display:flex;flex-wrap:wrap;gap:9px;margin:16px 0 22px}.tag-choices label{cursor:pointer}.tag-choices input{position:absolute;opacity:0;pointer-events:none}.tag-choices span{display:block;border:1px solid var(--line,#d8d4cb);border-radius:999px;padding:8px 13px;background:#fff;transition:.15s ease}.tag-choices input:checked+span{color:#fff;background:#365f4d;border-color:#365f4d}.tag-warning{color:#9b4d3f;margin-top:8px}
+@media(max-width:700px){.tag-choices{max-height:30vh;overflow:auto}.resultbar .row{flex-wrap:wrap}#batchTags{order:-1;width:100%}}

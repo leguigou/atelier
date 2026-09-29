@@ -1,0 +1,8 @@
+.token-list{display:grid;margin-top:20px}
+.token-row{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:15px 0;border-top:1px solid var(--line)}
+.token-row strong,.token-row code,.token-row small{display:block}
+.token-row code{margin:5px 0;color:var(--gold)}
+.token-row small{color:var(--muted)}
+.api-access #tokenForm label{margin-top:0}
+.api-access #tokenForm button{align-self:end;margin-bottom:1px}
+@media(max-width:700px){.token-row{align-items:flex-start}.api-access #tokenForm{display:grid}.api-access #tokenForm button{justify-self:start}}
