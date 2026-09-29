@@ -102,6 +102,23 @@ l'authentification **Token** = la valeur de `MCP_HTTP_TOKEN`. Le serveur doit do
 depuis Internet : tunnel sortant (Cloudflare Tunnel, ngrok) ou machine publique, plus le proxy
 TLS ci-dessus. Même logique pour un connecteur Claude.
 
+## Déploiement (Dokploy)
+
+Service Compose créé depuis ce dépôt :
+
+| Réglage | Valeur |
+|---|---|
+| Dépôt / branche | ce dépôt, branche `main` |
+| Chemin du compose | `./mcp/docker-compose.yml` |
+| Port du domaine | `8080`, TLS par le resolver du reverse proxy |
+| Variables d'environnement | `ATELIER_BASE`, `ATELIER_TOKEN`, `MCP_HTTP_TOKEN` |
+
+**Piège du webhook** : l'URL de déploiement fournie par le panneau contient le *refresh token*
+du service (`/api/deploy/compose/<refresh-token>`), pas son identifiant — un webhook GitHub
+pointant sur `/api/deploy/compose/<composeId>` reçoit `404 Compose Not Found`. Le webhook doit
+être déclaré sur l'événement `push` ; avec un vrai payload de push il répond
+`Compose deployed successfully`.
+
 ## Vérifier sans client MCP
 
 ```bash
