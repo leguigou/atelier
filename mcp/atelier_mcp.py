@@ -188,6 +188,67 @@ def etat_bibliotheque(_=None):
     return out
 
 
+LINK_RE = re.compile(
+    r"(?:youtu\.be/|youtube\.com/(?:watch\?(?:[^\s&]*&)*v=|shorts/|embed/|live/)|^)([A-Za-z0-9_-]{11})(?:[?&#/\s]|$)",
+    re.IGNORECASE,
+)
+
+
+def youtube_ref(value):
+    """Identifiant YouTube contenu dans un lien (ou référence brute), sinon chaîne vide."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    match = LINK_RE.search(text)
+    if match:
+        return match.group(1)
+    return text if re.fullmatch(r"[A-Za-z0-9_-]{11}", text) else ""
+
+
+def resolve_source(value):
+    """Identifiant Atelier d'une source, depuis un identifiant, un identifiant YouTube ou un lien.
+
+    Nécessaire parce que la recherche de l'API ne parcourt que titre/auteur/transcription : un lien
+    collé tel quel ne renvoie rien, alors que c'est la façon la plus naturelle de désigner une vidéo.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:  # identifiant Atelier direct
+        api.call("GET", "/api/v1/sources/%s" % text)
+        return text
+    except ApiError:
+        pass
+    ref = youtube_ref(text)
+    if not ref:
+        return ""
+    offset, seen = 0, 0  # repli : parcourir le catalogue à la recherche de la vidéo
+    while True:
+        page = api.call("GET", "/api/v1/sources", {"limit": 200, "offset": offset})
+        items = page.get("items") or []
+        for source in items:
+            if source.get("youtube_id") == ref or ref in str(source.get("url", "")):
+                return source["id"]
+        seen += len(items)
+        if not items or seen >= int(page.get("total") or 0):
+            return ""
+        offset = seen
+
+
+def source_item(source):
+    """Vue allégée d'une source, telle que renvoyée par les outils de recherche."""
+    return dict(
+        id=source["id"], titre=source["title"], auteur=source.get("author", ""),
+        format=source.get("kind", ""), date=source.get("date", ""),
+        duree=stamp(source.get("duration")),
+        segments=source.get("segment_count", len(source.get("segments") or [])),
+        url=source.get("url", ""), statut=source.get("status", ""),
+        tags=(source.get("annotation") or {}).get("tags", []),
+        favori=bool((source.get("annotation") or {}).get("liked")),
+        archive=bool((source.get("annotation") or {}).get("archived")),
+    )
+
+
 def chercher_sources(args):
     args = args or {}
     query = {"limit": str(min(200, int(args.get("limite") or 25)))}
@@ -202,17 +263,18 @@ def chercher_sources(args):
     if args.get("avec_texte") is False:
         query["has_transcript"] = "false"
     data = api.call("GET", "/api/v1/sources", query)
-    items = []
-    for s in data.get("items", []):
-        items.append(dict(
-            id=s["id"], titre=s["title"], auteur=s.get("author", ""), format=s.get("kind", ""),
-            date=s.get("date", ""), duree=stamp(s.get("duration")), segments=s.get("segment_count", 0),
-            url=s.get("url", ""), statut=s.get("status", ""),
-            tags=(s.get("annotation") or {}).get("tags", []),
-            favori=bool((s.get("annotation") or {}).get("liked")),
-            archive=bool((s.get("annotation") or {}).get("archived")),
-        ))
-    return dict(total=data.get("total", 0), renvoye=len(items), sources=items)
+    items = [source_item(s) for s in data.get("items", [])]
+    total = data.get("total", 0)
+    if not items and args.get("q"):
+        # Lien ou identifiant YouTube collé comme requête : la recherche textuelle ne le voit pas.
+        linked = resolve_source(args["q"])
+        if linked:
+            try:
+                items = [source_item(api.call("GET", "/api/v1/sources/%s" % linked))]
+                total = 1
+            except ApiError:
+                pass
+    return dict(total=total, renvoye=len(items), sources=items)
 
 
 def _hit_windows(segments, needles, context=1, per_source=6, strong=None, weights=None):
@@ -257,6 +319,9 @@ def chercher_passages(args):
     sources_max = max(1, min(30, int(args.get("sources_max") or 12)))
     transcription_total = api.call(
         "GET", "/api/v1/sources", {"limit": 1, "has_transcript": "true"}).get("total", 0)
+    # Une vidéo désignée par son lien doit être interrogée même si aucun de ses mots ne ressort :
+    # c'est le cas d'usage « résume-moi cette vidéo » collé depuis le navigateur.
+    linked_id = resolve_source(youtube_ref(question)) if youtube_ref(question) else ""
 
     # Le corpus sert de référence : un mot présent partout (« comment », « quand ») ne discrimine
     # rien et ramènerait du bruit. L'API renvoie, pour chaque mot, le nombre de sources qui le
@@ -281,6 +346,12 @@ def chercher_passages(args):
         # Aucun mot ne filtre utilement : on garde les mots les plus rares plutôt que rien.
         ranked_terms = sorted((t for t in frequencies if frequencies[t]), key=lambda t: frequencies[t])
         strong = set(ranked_terms[:1]) or set(frequencies)
+    if linked_id:
+        try:
+            catalogue.setdefault(linked_id, api.call("GET", "/api/v1/sources/%s" % linked_id))
+            ranked = [linked_id] + [sid for sid in ranked if sid != linked_id]
+        except ApiError:
+            linked_id = ""
 
     found = []
     for sid in ranked:
@@ -289,8 +360,19 @@ def chercher_passages(args):
             transcript = api.call("GET", "/api/v1/sources/%s/transcript" % sid)
         except ApiError:
             continue
+        # Sur la vidéo explicitement citée, on ne filtre pas : l'utilisateur veut son contenu,
+        # pas les seuls passages qui contiennent un mot rare.
         windows = _hit_windows(transcript.get("segments", []), needles, per_source=6,
-                               strong=strong, weights=weights)
+                               strong=(None if sid == linked_id else strong), weights=weights)
+        if not windows and sid == linked_id:
+            found.append(dict(
+                source_id=sid, titre=meta["title"], auteur=meta.get("author", ""),
+                format=meta.get("kind", ""), date=meta.get("date", ""), url=meta.get("url", ""),
+                duree=stamp(meta.get("duration", 0)), passages=[],
+                note=("Vidéo citée par son lien : appelez lire_source avec source_id=%s "
+                      "pour sa transcription complète." % sid),
+            ))
+            continue
         if not windows:
             continue
         found.append(dict(
@@ -298,7 +380,7 @@ def chercher_passages(args):
             format=meta.get("kind", ""), date=meta.get("date", ""), url=meta.get("url", ""),
             duree=stamp(meta.get("duration", 0)), passages=windows,
         ))
-    found.sort(key=lambda item: -item["passages"][0]["score"])
+    found.sort(key=lambda item: -(item["passages"][0]["score"] if item["passages"] else -1))
     found = found[:limite]
     return dict(
         requete=question, mots_cles=needles,
@@ -312,9 +394,12 @@ def chercher_passages(args):
 
 def lire_source(args):
     args = args or {}
-    sid = str(args.get("source_id") or "").strip()
+    asked = str(args.get("source_id") or "").strip()
+    if not asked:
+        raise ApiError("source_id requis (identifiant Atelier, identifiant YouTube ou lien).")
+    sid = resolve_source(asked)
     if not sid:
-        raise ApiError("source_id requis.")
+        raise ApiError("Source introuvable : %s" % asked)
     source = api.call("GET", "/api/v1/sources/%s" % sid)
     segments = source.get("segments") or []
     annotation = source.get("annotation") or {}
@@ -575,9 +660,10 @@ TOOLS = [
          handler=etat_bibliotheque),
     dict(name="chercher_sources",
          description="Chercher des sources (vidéos, documents) dans l'Atelier par mots-clés, "
-                     "auteur ou format. Renvoie les métadonnées, pas la transcription.",
+                     "auteur ou format. Renvoie les métadonnées, pas la transcription. "
+                     "Accepte aussi un lien YouTube ou un identifiant de vidéo.",
          inputSchema={"type": "object", "properties": {
-             "q": {"type": "string", "description": "Mots-clés (titres, auteurs, texte)."},
+             "q": {"type": "string", "description": "Mots-clés (titres, auteurs, texte), ou un lien YouTube."},
              "auteur": {"type": "string", "description": "Auteur exact."},
              "format": {"type": "string", "description": "Vidéo, Short, PDF, EPUB, Document…"},
              "avec_texte": {"type": "boolean", "description": "Ne garder que les sources transcrites."},
@@ -587,18 +673,20 @@ TOOLS = [
     dict(name="chercher_passages",
          description="LA recherche à utiliser pour répondre à une question sur le contenu : "
                      "cherche dans TOUTES les transcriptions et renvoie les passages horodatés "
-                     "correspondants, avec source, auteur et horodatage.",
+                     "correspondants, avec source, auteur et horodatage. Si la question contient "
+                     "un lien YouTube, cette vidéo est interrogée en priorité.",
          inputSchema={"type": "object", "properties": {
-             "q": {"type": "string", "description": "Question ou mots-clés à chercher."},
+             "q": {"type": "string", "description": "Question ou mots-clés à chercher (lien YouTube accepté)."},
              "limite": {"type": "integer", "description": "Sources à détailler (défaut 6, max 20)."},
              "sources_max": {"type": "integer", "description": "Sources candidates à balayer (défaut 12)."}},
              "required": ["q"], "additionalProperties": False},
          handler=chercher_passages),
     dict(name="lire_source",
          description="Lire une source précise : transcription horodatée (complète ou filtrée sur "
-                     "un mot-clé), métadonnées, synthèse IA, tags et notes.",
+                     "un mot-clé), métadonnées, synthèse IA, tags et notes. L'identifiant peut être "
+                     "celui de l'Atelier, l'identifiant YouTube ou le lien de la vidéo.",
          inputSchema={"type": "object", "properties": {
-             "source_id": {"type": "string", "description": "Identifiant de la source."},
+             "source_id": {"type": "string", "description": "Identifiant de la source, identifiant YouTube ou lien."},
              "q": {"type": "string", "description": "Filtrer la transcription sur ces mots-clés."}},
              "required": ["source_id"], "additionalProperties": False},
          handler=lire_source),
