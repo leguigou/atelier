@@ -191,6 +191,27 @@ class WorkspaceTests(unittest.TestCase):
         reply={'choices':[{'finish_reason':'stop','message':{'content':json.dumps(rows)}}]}
         with patch.object(app,'llm_request',return_value=reply),self.assertRaisesRegex(ValueError,'omis ou désordonné'):app.rewrite_transcript(s,{'id':'test-rewrite-invalid','total':1,'done':0,'message':''})
         with app.connect() as c:c.execute("DELETE FROM settings WHERE id='job:test-rewrite-invalid'")
+    def test_rewrite_resumes_from_last_completed_batch(self):
+        s=app.get_source('dQTr8VInXUE');original=s['annotation'];s['segments']=[dict(start=i,duration=1,text=('texte '+str(i)+' ')*800) for i in range(3)]
+        chunks=app.transcript_rewrite_chunks(s['segments']);self.assertEqual(len(chunks),3)
+        def answer(chunk):
+            a,b=chunk[0]['index'],chunk[-1]['index']
+            return {'choices':[{'finish_reason':'stop','message':{'content':json.dumps({'paragraphs':[{'segment_start':a,'segment_end':b,'text':f'Lot {a}.'}]})}}]}
+        first=answer(chunks[0]);job={'id':'test-rewrite-resume-1','total':len(chunks),'done':0,'message':''}
+        try:
+            with patch.object(app,'llm_request',side_effect=[first,ValueError('coupure réseau')]),self.assertRaisesRegex(ValueError,'coupure réseau'):app.rewrite_transcript(s,job)
+            draft=app.rewrite_draft(s,chunks,app.settings()['model']);self.assertEqual(draft['done'],1);self.assertEqual(len(draft['paragraphs']),1)
+            calls=[]
+            def resumed(route,request):
+                chunk=json.loads(request['messages'][1]['content'])['segments'];calls.append(chunk[0]['index']);return answer(chunk)
+            resumed_job={'id':'test-rewrite-resume-2','total':len(chunks),'done':0,'message':''}
+            with patch.object(app,'llm_request',side_effect=resumed):count=app.rewrite_transcript(s,resumed_job)
+            self.assertEqual(calls,[1,2]);self.assertEqual(count,3);self.assertEqual(resumed_job['resumed_from'],1)
+            self.assertIsNone(app.rewrite_draft(s,chunks,app.settings()['model']))
+        finally:
+            with app.connect() as c:
+                c.execute('INSERT OR REPLACE INTO annotations VALUES(?,?)',(s['id'],app.dumps(original)))
+                c.execute("DELETE FROM settings WHERE id IN ('job:test-rewrite-resume-1','job:test-rewrite-resume-2',?)",('rewrite-draft:'+s['id'],))
     def test_idea_importance_is_saved_and_unknown_fields_are_rejected(self):
         data=dict(title='Idée importante',importance='Opérationnelle',archived=True,refs=[dict(source_id='dQTr8VInXUE',start=0,end=1)])
         item=app.save_idea(data);self.assertEqual(item['importance'],'Opérationnelle');self.assertTrue(item['archived'])
