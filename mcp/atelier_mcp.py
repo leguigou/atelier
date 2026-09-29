@@ -4,8 +4,13 @@
 Expose la bibliothèque de l'Atelier (sources, transcriptions, idées, dossiers, livres)
 à n'importe quel client MCP : Hermes, Claude Desktop, un agent maison…
 
-Transport : stdio, JSON-RPC 2.0, protocole MCP. Aucune dépendance hors bibliothèque
-standard : il suffit d'un python3 et d'un jeton API Atelier.
+Transport : JSON-RPC 2.0, protocole MCP. Aucune dépendance hors bibliothèque standard :
+il suffit d'un python3 et d'un jeton API Atelier.
+
+Deux transports, même code métier :
+  stdio (défaut)  client local qui lance le process (Hermes, Claude Desktop, Cursor…)
+  HTTP (--http)   Streamable HTTP pour un client distant (ChatGPT, Claude web…),
+                  protégé par un jeton Bearer (MCP_HTTP_TOKEN)
 
 Configuration (variables d'environnement) :
   ATELIER_BASE           URL de l'Atelier (défaut : http://127.0.0.1:8765)
@@ -13,14 +18,19 @@ Configuration (variables d'environnement) :
   ATELIER_TOKEN          jeton API « atelier_… »
   ATELIER_TOKEN_FILE     fichier contenant le jeton (défaut : atelier-token.txt, à côté du script)
   ATELIER_MAX_CHARS      taille maximale d'une réponse d'outil (défaut 40000)
+  MCP_HTTP_TOKEN         jeton Bearer exigé en mode HTTP (vide = aucune authentification)
+  MCP_HTTP_PORT          port d'écoute en mode HTTP (défaut 8080)
+  MCP_READ_ONLY=1        n'expose que les outils de lecture (écriture masquée)
 
 Lancer : python3 atelier_mcp.py            (mode serveur MCP sur stdin/stdout)
+         python3 atelier_mcp.py --http     (mode Streamable HTTP sur /mcp)
          python3 atelier_mcp.py --selftest (vérifie l'API sans client MCP)
          python3 atelier_mcp.py --tools    (liste les outils, sans réseau)
 """
 import json
 import os
 import re
+import secrets
 import sys
 import unicodedata
 import urllib.error
@@ -28,6 +38,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from collections import Counter
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from math import log
 from pathlib import Path
 
@@ -44,6 +55,21 @@ STOPWORDS = set(
     "son leur elle elles ils nous vous mais entre avant avoir faire etre aussi peut tout sans "
     "tres deux trois the and for with that this from".split()
 )
+
+HTTP_TOKEN = os.environ.get("MCP_HTTP_TOKEN", "").strip()
+HTTP_PORT = int(os.environ.get("MCP_HTTP_PORT", "8080"))
+HTTP_HOST = os.environ.get("MCP_HTTP_HOST", "0.0.0.0")
+READ_ONLY = os.environ.get("MCP_READ_ONLY", "").strip().lower() in ("1", "true", "oui", "yes")
+# Outils qui modifient la bibliothèque — masqués quand READ_ONLY est actif.
+WRITE_TOOLS = frozenset({
+    "modifier_idees",
+    "modifier_sources",
+    "creer_idee",
+    "creer_dossier",
+    "definir_intention",
+    "ajouter_chapitre",
+    "ajouter_texte_chapitre",
+})
 
 
 def folded(value):
@@ -702,14 +728,27 @@ def call_tool(name, arguments):
     return tool["handler"](arguments or {})
 
 
+_SINK = None  # en mode HTTP, les réponses s'accumulent ici au lieu de partir sur stdout
+
+
 def respond(message_id, result=None, error=None):
     payload = {"jsonrpc": "2.0", "id": message_id}
     if error is not None:
         payload["error"] = error
     else:
         payload["result"] = result
+    if _SINK is not None:
+        _SINK.append(payload)
+        return
     sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
     sys.stdout.flush()
+
+
+def visible_tools():
+    """Outils exposés au client — le mode lecture seule masque l'écriture."""
+    if READ_ONLY:
+        return [t for t in TOOLS if t["name"] not in WRITE_TOOLS]
+    return list(TOOLS)
 
 
 def handle(message):
@@ -730,11 +769,17 @@ def handle(message):
     elif method == "ping":
         respond(message_id, {})
     elif method == "tools/list":
-        respond(message_id, {"tools": [describe(t) for t in TOOLS]})
+        respond(message_id, {"tools": [describe(t) for t in visible_tools()]})
     elif method == "tools/call":
         params = message.get("params") or {}
+        name = params.get("name", "")
+        if READ_ONLY and name in WRITE_TOOLS:
+            respond(message_id, {"content": [{"type": "text",
+                     "text": "Serveur en lecture seule : l'outil %s n'est pas disponible." % name}],
+                     "isError": True})
+            return
         try:
-            result = call_tool(params.get("name", ""), params.get("arguments") or {})
+            result = call_tool(name, params.get("arguments") or {})
             text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, indent=1)
             respond(message_id, {"content": [{"type": "text", "text": clip(text)}], "isError": False})
         except ApiError as error:
@@ -765,6 +810,111 @@ def serve():
             handle(message)
 
 
+# --------------------------------------------------------------------------- HTTP
+
+
+class McpHttpHandler(BaseHTTPRequestHandler):
+    """Transport Streamable HTTP, sans session — pour les clients distants."""
+
+    protocol_version = "HTTP/1.1"
+    server_version = "atelier-mcp/%s" % SERVER_VERSION
+
+    def log_message(self, fmt, *args):
+        # Journal minimal : jamais le contenu des requêtes (jeton, requêtes de recherche).
+        sys.stderr.write("[http] %s %s\n" % (self.address_string(), fmt % args))
+
+    def _authorized(self):
+        if not HTTP_TOKEN:
+            return True
+        header = self.headers.get("Authorization", "").strip()
+        value = header[7:].strip() if header[:7].lower() == "bearer " else header
+        return bool(value) and secrets.compare_digest(value, HTTP_TOKEN)
+
+    def _write(self, status, payload, content_type="application/json", extra=None, close=False):
+        body = payload if isinstance(payload, bytes) else json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        for key, value in (extra or {}).items():
+            self.send_header(key, value)
+        if close:
+            self.send_header("Connection", "close")
+            self.close_connection = True
+        self.end_headers()
+        if body:
+            self.wfile.write(body)
+
+    def _unknown_path(self):
+        self._write(404, {"error": "chemin inconnu — utilisez POST /mcp"})
+
+    def _unauthorized(self):
+        self._write(401, {"jsonrpc": "2.0", "id": None,
+                          "error": {"code": -32001, "message": "Jeton d'accès requis"}},
+                    extra={"WWW-Authenticate": 'Bearer realm="atelier-mcp"'})
+
+    def do_GET(self):
+        path = urllib.parse.urlparse(self.path).path
+        if path == "/health":
+            self._write(200, {"status": "ok", "server": SERVER_NAME, "version": SERVER_VERSION,
+                              "outils": len(visible_tools()), "lecture_seule": READ_ONLY,
+                              "base": api.base or "à détecter"})
+        elif path in ("/mcp", "/"):
+            # Aucun flux serveur→client : 405, comme la spécification l'autorise.
+            self._write(405, {"jsonrpc": "2.0", "id": None,
+                              "error": {"code": -32601, "message": "Utilisez POST sur /mcp"}},
+                        extra={"Allow": "POST"})
+        else:
+            self._unknown_path()
+
+    def do_DELETE(self):
+        self._write(405, {"error": "serveur sans session"}, extra={"Allow": "POST"})
+
+    def do_POST(self):
+        global _SINK
+        if urllib.parse.urlparse(self.path).path not in ("/mcp", "/"):
+            return self._unknown_path()
+        if not self._authorized():
+            return self._unauthorized()
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        raw = self.rfile.read(length) if length else b""
+        try:
+            message = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return self._write(400, {"jsonrpc": "2.0", "id": None,
+                                     "error": {"code": -32700, "message": "JSON invalide"}})
+
+        collected = []
+        _SINK = collected
+        try:
+            for item in (message if isinstance(message, list) else [message]):
+                handle(item)
+        finally:
+            _SINK = None
+
+        if not collected:  # notifications seules : rien à renvoyer
+            return self._write(202, b"", close=True)
+        if "text/event-stream" in self.headers.get("Accept", ""):
+            stream = "".join("event: message\ndata: %s\n\n" % json.dumps(payload, ensure_ascii=False)
+                             for payload in collected)
+            return self._write(200, stream.encode("utf-8"),
+                               content_type="text/event-stream", close=True)
+        self._write(200, collected if isinstance(message, list) else collected[0])
+
+
+def serve_http():
+    if not HTTP_TOKEN:
+        sys.stderr.write("atelier-mcp : ATTENTION — MCP_HTTP_TOKEN vide, serveur ouvert à tous\n")
+    httpd = ThreadingHTTPServer((HTTP_HOST, HTTP_PORT), McpHttpHandler)
+    sys.stderr.write("atelier-mcp %s : HTTP prêt sur %s:%d/mcp (%d outils%s, base %s)\n"
+                     % (SERVER_VERSION, HTTP_HOST, HTTP_PORT, len(visible_tools()),
+                        ", lecture seule" if READ_ONLY else "", api.base or "à détecter"))
+    sys.stderr.flush()
+    httpd.serve_forever()
+
+
 def selftest():
     """Vérifie l'API et les outils sans client MCP."""
     def show(label, call):
@@ -789,6 +939,8 @@ if __name__ == "__main__":
     if "--selftest" in sys.argv:
         selftest()
     elif "--tools" in sys.argv:
-        print(json.dumps([describe(t) for t in TOOLS], ensure_ascii=False, indent=1))
+        print(json.dumps([describe(t) for t in visible_tools()], ensure_ascii=False, indent=1))
+    elif "--http" in sys.argv:
+        serve_http()
     else:
         serve()

@@ -52,6 +52,56 @@ Redémarrer l'agent : les serveurs MCP sont lus au démarrage, sans rechargement
 Les outils apparaissent en `mcp_atelier_*`. Le même fichier de configuration se décline
 pour tout autre client MCP (stdio, commande `python3 atelier_mcp.py`).
 
+## Mode HTTP — pour un client distant (ChatGPT, Claude web…)
+
+Un client qui ne peut pas lancer de process local a besoin d'une **URL HTTPS publique** parlant
+Streamable HTTP. Même fichier, même outils :
+
+```bash
+MCP_HTTP_TOKEN=<jeton-que-le-client-présentera> \
+ATELIER_BASE=https://atelier.example.org \
+ATELIER_TOKEN=<jeton-api> \
+python3 atelier_mcp.py --http          # écoute sur 0.0.0.0:8080/mcp
+```
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `MCP_HTTP_TOKEN` | — | jeton Bearer exigé (vide = serveur **ouvert**, à ne jamais exposer) |
+| `MCP_HTTP_PORT` | `8080` | port d'écoute |
+| `MCP_HTTP_HOST` | `0.0.0.0` | interface d'écoute |
+| `MCP_READ_ONLY` | — | `1` : n'expose que les 11 outils de consultation |
+
+Routes : `POST /mcp` (JSON-RPC ; réponse JSON, ou SSE si le client envoie
+`Accept: text/event-stream`), `GET /health` (sans authentification, pour le proxy).
+Toute requête sans jeton valide reçoit `401`.
+
+Le jeton du client distant est **distinct** du jeton API Atelier : il se révoque en changeant
+la variable, alors que le jeton Atelier ne quitte jamais le serveur.
+
+### Docker
+
+```bash
+cd mcp
+export ATELIER_BASE=https://atelier.example.org \
+       ATELIER_TOKEN=atelier_xxx \
+       MCP_HTTP_TOKEN=un-secret-long
+docker compose up -d --build          # → http://localhost:8080/mcp
+curl -s localhost:8080/health         # {"status": "ok", "outils": 18, ...}
+```
+
+Placer un **reverse proxy TLS** devant (Traefik, Caddy, nginx) : sans lui, les requêtes et le
+jeton circulent en clair. Si le proxy tourne dans un autre conteneur, partager un réseau Docker
+commun (voir le bloc commenté dans `docker-compose.yml`).
+
+### ChatGPT
+
+ChatGPT ne se connecte qu'à des serveurs **distants en HTTPS**, et uniquement sur les offres
+payantes, dans le navigateur (pas l'application mobile). Réglages → **Applications /
+Connecteurs** → mode développeur → créer une app avec l'URL `https://…/mcp` et
+l'authentification **Token** = la valeur de `MCP_HTTP_TOKEN`. Le serveur doit donc être joignable
+depuis Internet : tunnel sortant (Cloudflare Tunnel, ngrok) ou machine publique, plus le proxy
+TLS ci-dessus. Même logique pour un connecteur Claude.
+
 ## Vérifier sans client MCP
 
 ```bash

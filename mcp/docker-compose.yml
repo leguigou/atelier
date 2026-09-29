@@ -1,0 +1,32 @@
+# Mode HTTP (Streamable HTTP) : pour un client MCP distant qui ne peut pas lancer de
+# process local — ChatGPT, Claude web, un agent hébergé. En local, stdio reste plus simple.
+services:
+  atelier-mcp:
+    build: .
+    restart: unless-stopped
+    # Derrière un reverse proxy (Traefik, Caddy, nginx) qui doit joindre le service.
+    expose:
+      - "8080"
+    environment:
+      # `- CLÉ=VALEUR` obligatoire : un mapping YAML casse les variables au déploiement.
+      - ATELIER_BASE=${ATELIER_BASE}
+      - ATELIER_TOKEN=${ATELIER_TOKEN}
+      - ATELIER_MAX_CHARS=${ATELIER_MAX_CHARS:-40000}
+      # Jeton Bearer que le client distant doit présenter. Vide = serveur ouvert à tous :
+      # ne jamais l'exposer sans cette variable.
+      - MCP_HTTP_TOKEN=${MCP_HTTP_TOKEN}
+      # Optionnel : `1` n'expose que les 11 outils de consultation.
+      - MCP_READ_ONLY=${MCP_READ_ONLY:-}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+# Si le reverse proxy tourne dans un autre conteneur (Dokploy, Traefik partagé), décommenter
+# pour rejoindre son réseau : sinon il ne peut pas router vers ce service.
+# networks:
+#   default:
+#     name: dokploy-network
+#     external: true
