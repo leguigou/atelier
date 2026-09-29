@@ -85,6 +85,24 @@ configuration dans `mcp/README.md`.
 
 Créer un jeton depuis **Paramètres → Accès API**. Le secret complet n’est affiché qu’une seule fois et seule son empreinte SHA-256 est conservée dans SQLite. L’administration affiche son nom, son préfixe, sa date de création, sa dernière utilisation et le nombre d’appels. La suppression révoque immédiatement l’accès.
 
+### Rattraper une transcription manquée (`backfill_sous_titres.py`)
+
+L’import d’une vidéo YouTube passe par une bibliothèque de sous-titres que la plateforme limite
+parfois : la source reste alors sans texte, avec le statut « Texte non récupéré », alors que la
+vidéo a des sous-titres. `backfill_sous_titres.py` refait le travail autrement (yt-dlp), puis écrit
+la transcription dans la source existante via un `PATCH /api/v1/sources/<id>` — la source, ses
+annotations et ses idées sont conservées.
+
+```bash
+python3 backfill_sous_titres.py --liste        # ce qui serait traité, sans rien écrire
+python3 backfill_sous_titres.py --limite 10    # traite 10 sources, reprend ensuite où il s'est arrêté
+```
+
+Les sources archivées sont ignorées par défaut (`--avec-archives` pour les inclure) et l’état est
+conservé dans `backfill-etat.json` : un échec définitif (« YouTube ne propose aucune piste ») n’est
+pas retenté, alors qu’un refus temporaire (HTTP 429) l’est. Même configuration que le serveur MCP
+(`ATELIER_BASE`, `ATELIER_TOKEN` ou `ATELIER_TOKEN_FILE`).
+
 Chaque appel protégé utilise l’en-tête suivant :
 
 ```http
