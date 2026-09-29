@@ -70,6 +70,19 @@ Pour les sauvegardes, utiliser l'export JSON depuis l'interface et une sauvegard
 
 L’Atelier expose une API REST versionnée sur `/api/v1`. La page publique `/api` explique l’authentification et les opérations disponibles ; `/api/openapi.json` fournit le schéma OpenAPI 3.1 directement exploitable par un agent, et `/api/llms.txt` donne un point d’entrée textuel court.
 
+### Serveur MCP (`mcp/`)
+
+Le dossier `mcp/` contient un serveur MCP autonome (transport stdio, bibliothèque standard
+uniquement) qui donne à un agent les mêmes moyens que l’interface : recherche de passages
+horodatés dans toutes les transcriptions, lecture d’une source ou d’une idée, classement des
+idées et des sources (tags, statut, favori, archivage réversible), et écriture du livre
+(intention, chapitres, paragraphes sourcés). Aucun outil de suppression n’est exposé.
+
+Le serveur se configure par variables d’environnement (`ATELIER_BASE`, `ATELIER_TOKEN` ou
+`ATELIER_TOKEN_FILE`, `ATELIER_MAX_CHARS`) : le jeton n’est jamais transmis par le client MCP.
+Pour vérifier sans client : `python3 mcp/atelier_mcp.py --selftest`. Détails et exemple de
+configuration dans `mcp/README.md`.
+
 Créer un jeton depuis **Paramètres → Accès API**. Le secret complet n’est affiché qu’une seule fois et seule son empreinte SHA-256 est conservée dans SQLite. L’administration affiche son nom, son préfixe, sa date de création, sa dernière utilisation et le nombre d’appels. La suppression révoque immédiatement l’accès.
 
 Chaque appel protégé utilise l’en-tête suivant :

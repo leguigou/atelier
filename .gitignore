@@ -7,3 +7,4 @@ __pycache__/
 .local-config.json
 Acces-local.txt
 qa/
+atelier-token.txt
