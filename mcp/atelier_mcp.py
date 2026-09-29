@@ -1030,6 +1030,24 @@ class McpHttpHandler(BaseHTTPRequestHandler):
 
     # ─────────────── OAuth 2.1 : métadonnées, enregistrement, consentement, jetons ───────────────
     def _read_body(self):
+        """Lit le corps en entier — y compris en Transfer-Encoding: chunked — sinon les octets
+        restants salissent la connexion que le proxy réutilise pour la requête suivante."""
+        if (self.headers.get("Transfer-Encoding") or "").lower().strip() == "chunked":
+            blocks = []
+            while True:
+                line = self.rfile.readline(9000).strip()
+                if not line:
+                    break
+                try:
+                    size = int(line.split(b";")[0], 16)
+                except ValueError:
+                    break
+                if size == 0:
+                    self.rfile.readline(9000)  # CRLF final
+                    break
+                blocks.append(self.rfile.read(size))
+                self.rfile.read(2)  # CRLF après chaque bloc
+            return b"".join(blocks)
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
@@ -1295,15 +1313,13 @@ class McpHttpHandler(BaseHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         if self._oauth_post(path):
             return
+        # Le corps est TOUJOURS lu avant de répondre : un corps laissé dans la socket salit la
+        # connexion que le proxy réutilise pour la requête suivante (400 « Bad request »).
+        raw = self._read_body()
         if path not in ("/mcp", "/"):
             return self._unknown_path()
         if not self._authorized():
             return self._unauthorized()
-        try:
-            length = int(self.headers.get("Content-Length") or 0)
-        except ValueError:
-            length = 0
-        raw = self.rfile.read(length) if length else b""
         try:
             message = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
