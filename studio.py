@@ -323,29 +323,82 @@ class Studio:
         self.a.JOBS[job['id']]=job;self.a.persist_job(job)
         threading.Thread(target=self.fetch_youtube,args=(s,job),daemon=True).start()
         return dict(source=s,job=job)
+    def subtitles(self,vid):
+        """Sous-titres d'une vidéo : bibliothèque habituelle, puis repli yt-dlp si YouTube la bloque."""
+        try:
+            import requests
+            class TimeoutSession(requests.Session):
+                def request(self,*args,**kwargs):kwargs.setdefault('timeout',20);return super().request(*args,**kwargs)
+            from youtube_transcript_api import YouTubeTranscriptApi
+            candidates=list(YouTubeTranscriptApi(http_client=TimeoutSession()).list(vid))
+            chosen=next((t for lang in ('fr','en') for t in candidates if t.language_code.startswith(lang)),candidates[0] if candidates else None)
+            if chosen is None:raise ValueError('Aucun sous-titre disponible.')
+            result=chosen.fetch()
+            return result.to_raw_data(),result.language_code,result.is_generated,'youtube-transcript-api'
+        except Exception:
+            return self.subtitles_ytdlp(vid)
+    def subtitles_ytdlp(self,vid):
+        """Repli : yt-dlp récupère les sous-titres quand la bibliothèque se fait refuser par YouTube."""
+        import os, sys, shutil, subprocess, tempfile
+        tool=shutil.which('yt-dlp') or shutil.which('yt-dlp.exe')
+        base=[tool] if tool else [sys.executable,'-m','yt_dlp']
+        with tempfile.TemporaryDirectory() as folder:
+            target=os.path.join(folder,'subs')
+            try:
+                done=subprocess.run(base+['--no-update','--skip-download','--write-subs','--write-auto-subs','--sub-langs','fr,en','--sub-format','json3','-o',target,'https://www.youtube.com/watch?v='+vid],capture_output=True,timeout=180)
+            except FileNotFoundError:
+                raise ValueError('yt-dlp introuvable : installez-le pour récupérer les sous-titres.')
+            except subprocess.TimeoutExpired:
+                raise ValueError('yt-dlp a dépassé le temps imparti.')
+            if done.returncode and b'No module named' in (done.stderr or b''):
+                raise ValueError('yt-dlp introuvable : installez-le (pip install yt-dlp) pour récupérer les sous-titres.')
+            for lang in ('fr','en'):
+                for name in ('subs.%s.json3'%lang,'subs.%s.auto.json3'%lang):
+                    path=os.path.join(folder,name)
+                    if os.path.exists(path):
+                        segments=self.json3_segments(path)
+                        if len(segments)>=3:return segments,lang,'auto' in name,'yt-dlp'
+        raise ValueError('Sous-titres introuvables : YouTube n’en propose aucune piste exploitable.')
+    def json3_segments(self,path):
+        """Convertit des sous-titres json3 (yt-dlp) en segments horodatés."""
+        segments=[]
+        with open(path,encoding='utf-8') as f:events=json.load(f).get('events',[])
+        for event in events:
+            text=''.join(part.get('utf8','') for part in event.get('segs',[])).replace('\n',' ').strip()
+            if text:segments.append(dict(text=text,start=event.get('tStartMs',0)/1000,duration=event.get('dDurationMs',0)/1000))
+        return segments
     def fetch_youtube(self,s,job):
         job['status']='running';self.a.persist_job(job);vid=s.get('youtube_id') or s['id']
         try:
             import requests
             class TimeoutSession(requests.Session):
                 def request(self,*args,**kwargs):kwargs.setdefault('timeout',20);return super().request(*args,**kwargs)
-            session=TimeoutSession()
             try:
-                r=session.get('https://www.youtube.com/oembed',params={'url':s['url'],'format':'json'});r.raise_for_status();meta=r.json();s.update(title=meta.get('title') or s['title'],author=meta.get('author_name') or s['author'])
+                r=TimeoutSession().get('https://www.youtube.com/oembed',params={'url':s['url'],'format':'json'});r.raise_for_status();meta=r.json();s.update(title=meta.get('title') or s['title'],author=meta.get('author_name') or s['author'])
             except Exception:pass
-            from youtube_transcript_api import YouTubeTranscriptApi
-            listing=YouTubeTranscriptApi(http_client=session).list(vid)
-            candidates=list(listing)
-            chosen=next((t for lang in ('fr','en') for t in candidates if t.language_code.startswith(lang)),candidates[0] if candidates else None)
-            if chosen is None:raise ValueError('Aucun sous-titre disponible.')
-            result=chosen.fetch();s['segments']=result.to_raw_data();s['language']=result.language_code;s['automatic']=result.is_generated;s['status']='Récupérée'
+            segments,language,automatic,origin=self.subtitles(vid)
+            s['segments']=segments;s['language']=language;s['automatic']=automatic;s['status']='Récupérée'
             s['duration']=max((x['start']+x.get('duration',0) for x in s['segments']),default=0)
-            s['warning']='';job['message']='Vidéo et transcription importées.'
+            s['warning']='Sous-titres récupérés par yt-dlp : la bibliothèque habituelle avait été refusée.' if origin=='yt-dlp' else ''
+            job['message']='Vidéo et transcription importées.'
         except Exception as e:
-            s['status']='Texte non récupéré';s['warning']='Le lien vidéo est conservé. YouTube a refusé la collecte ou aucun sous-titre n’est disponible. Vous pouvez coller une transcription manuellement.'
+            s.setdefault('segments',[]);s['status']='Texte non récupéré'
+            s['warning']='Le lien vidéo est conservé. La récupération automatique du texte a échoué — %s. Utilisez « Relancer la récupération » plus tard, ou collez une transcription manuellement.'%str(e).rstrip('. ')[:160]
             job['errors']=[dict(source_id=s['id'],message=s['warning'])];job['message']='Vidéo ajoutée, transcription indisponible.'
         with self.a.connect() as c:c.execute('UPDATE sources SET payload=?,text=? WHERE id=?',(self.a.dumps(s),' '.join(x['text'] for x in s['segments']),s['id']))
         job.update(status='finished',done=1);self.a.persist_job(job)
+    def refetch_transcript(self,data):
+        """Relance la récupération du texte d'une source existante (bouton « Relancer la récupération »)."""
+        s=self.a.get_source(str(data.get('id') or ''));vid=s.get('youtube_id') or ''
+        if not vid and s.get('url'):
+            try:vid=self.youtube_id(s['url'])
+            except ValueError:vid=''
+        if not vid:raise ValueError('Cette source ne vient pas d’une vidéo YouTube : collez son texte à la place.')
+        if any(j.get('type')=='refetch' and j.get('source_id')==s['id'] and j['status'] in ('queued','running') for j in self.a.JOBS.values()):return dict(source=s)
+        job=dict(id=self.a.uid(),type='refetch',source_id=s['id'],status='queued',total=1,done=0,message='Nouvelle tentative de récupération…',created=self.a.now(),errors=[])
+        self.a.JOBS[job['id']]=job;self.a.persist_job(job)
+        threading.Thread(target=self.fetch_youtube,args=(s,job),daemon=True).start()
+        return dict(source=s,job=job)
     def book_sections(self,b=None):
         b=b or self.book();sections=[]
         with self.a.connect() as c:ideas={v['id']:v for v in self.a.objects(c,'ideas')};sources={v['id']:v for v in self.a.objects(c,'sources')}

@@ -753,6 +753,7 @@ class Handler(BaseHTTPRequestHandler):
             elif route=='/api/agent/chat':result=agent_service.start(sys.modules[__name__],studio,AGENT_JOBS,data)
             elif route=='/api/agent/action':result=agent_service.apply_action(sys.modules[__name__],studio,required(data,'thread_id'),required(data,'action_id'),bool(data.get('approve',True)))
             elif route=='/api/youtube':result=studio.youtube(data)
+            elif route=='/api/refetch-transcript':result=studio.refetch_transcript(data)
             elif route=='/api/source-edit':
                 s=get_source(required(data,'id'));s.pop('annotation',None)
                 if 'title' in data:s['title']=required(data,'title',1000)

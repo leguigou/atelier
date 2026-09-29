@@ -6,4 +6,5 @@ reportlab>=5,<6
 Pillow>=11,<13
 defusedxml==0.7.1
 youtube-transcript-api>=1.2,<2
+yt-dlp>=2024.1
 pillow-heif>=1,<2

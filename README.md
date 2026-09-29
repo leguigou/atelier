@@ -48,6 +48,10 @@ python atelier/run_local.py
 
 Ouvrir `http://127.0.0.1:8765`. Le script `Lancer-Atelier.ps1` ouvre aussi le site et démarre Python en arrière-plan. Python 3.11 ou supérieur. Sans variables de production, le serveur écoute uniquement sur la boucle locale et la clé API est conservée en mémoire pour la session.
 
+Les sous-titres d’une vidéo sont d’abord demandés à YouTube par l’API habituelle ; si elle est refusée (quota, blocage), l’import bascule sur `yt-dlp`, installé avec les dépendances. Quand les deux échouent, la vidéo est conservée sans texte et un bouton **Relancer la récupération** apparaît sur sa fiche, à côté de « Ajouter le texte ».
+
+Mise à jour d’une copie locale : `git pull` dans le dossier de l’application, puis relancer `run_local.py` — le serveur recharge le code au démarrage.
+
 ## Déployer sur Dokploy
 
 Le dossier `atelier` est autonome : `corpus/sources.json` et `corpus/ideas.json` contiennent le fonds initial portable, sans clé ni notes personnelles. Pour régénérer ce fonds depuis `outputs` : `python atelier/prepare_corpus.py`.
