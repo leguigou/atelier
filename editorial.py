@@ -125,7 +125,17 @@ METHOD = (' Procède en quatre temps et rends-les séparément. '
           'Les références I… sont des idées déjà retenues par l’auteur (champ ideas), chacune accompagnée des passages de '
           'transcription d’où elle vient : leur nature (fait, opinion, témoignage, résultat déclaré) et leur statut '
           '(À vérifier, Relue) disent comment les employer — n’énonce jamais une opinion ou un témoignage comme un fait '
-          'établi, et range dans questions toute affirmation encore à vérifier. Les références E… sont des extraits bruts.')
+          'établi, et range dans questions toute affirmation encore à vérifier. Les références E… sont des extraits bruts. '
+          'Si le chapitre contient déjà du texte écrit, prolonge-le et complète-le au lieu de le répéter ou de repartir de zéro.')
+
+METHOD_REVIEW = (' Ta tâche est une relecture critique, pas une réécriture. Confronte le texte déjà écrit du chapitre aux idées '
+                 'retenues et aux passages de transcription, puis rends trois temps séparés. '
+                 'analysis: ce que le chapitre affirme, en face de ce que les sources disent réellement — nomme explicitement '
+                 'les affirmations sans source, les chiffres non sourcés et les contresens. '
+                 'interpretation: ton bilan de relecture, du plus grave au plus léger (contradictions internes, promesses '
+                 'invérifiables, manques, répétitions, passages trop abstraits pour ce lecteur). '
+                 'questions: ce qui doit être tranché, vérifié ou complété avant publication, une question par point. '
+                 'Ne propose aucun paragraphe de remplacement : la décision revient à l’auteur.')
 
 
 def propose(studio, data, progress=None):
@@ -135,11 +145,13 @@ def propose(studio, data, progress=None):
     schema = {
         'plan': 'chapters: [{title, purpose, evidence_ids: ["E1"]}], rationale: texte, questions: [texte]',
         'draft': 'analysis: texte (ce que les idées et les extraits disent, avec leurs références), interpretation: texte (l’angle retenu pour ce chapitre), paragraphs: [{text, evidence_ids: ["E1","I1"]}], rationale: texte, questions: [texte]',
-        'review': 'rationale: bilan, questions: [lacune, contradiction ou vérification nécessaire]'
+        'review': 'analysis: texte (ce que le chapitre affirme, confronté aux idées et aux passages), interpretation: texte (bilan de relecture, du plus grave au plus léger), rationale: texte, questions: [lacune, contradiction ou vérification nécessaire]'
     }[mode]
-    prompt = app.prompt_text('editorial') + (METHOD if mode == 'draft' else '') + ' Réponds en JSON avec les champs suivants: ' + schema
+    prompt = app.prompt_text('editorial') + {'draft': METHOD, 'review': METHOD_REVIEW}.get(mode, '') + ' Réponds en JSON avec les champs suivants: ' + schema
+    written = '\n\n'.join((blk.get('text') or '').strip() for blk in (chapter.get('blocks') or []) if (blk.get('text') or '').strip()) if chapter else ''
     payload = dict(book=dict(title=book['title'], brief=book.get('brief',{}), plan=[dict(title=c['title'],purpose=c.get('purpose','')) for c in book['chapters']]),
-                   chapter=dict(title=chapter['title'],text=chapter.get('notes','')[:18000],purpose=chapter.get('purpose','')) if chapter else None,
+                   chapter=dict(title=chapter['title'],text=(written or chapter.get('notes',''))[:18000],notes=chapter.get('notes','')[:4000],
+                                purpose=chapter.get('purpose','')) if chapter else None,
                    instruction=str(data.get('instruction',''))[:3000], ideas=ideas, excerpts=evidence)
     cfg = app.settings()
     if progress:progress('generation',f'Génération avec {cfg["model"]}…',55)
