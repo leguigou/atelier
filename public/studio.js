@@ -4,7 +4,7 @@ const newId=()=>crypto.randomUUID?crypto.randomUUID():Array.from(crypto.getRando
 const assetUrl=(id,preview=true)=>'/api/asset?id='+encodeURIComponent(id)+(preview?'&preview=1':'');
 let activeBookId='book-main';try{activeBookId=localStorage.getItem('atelier-last-book')||'book-main'}catch{}
 const baseApi=api;
-api=async function(path,data){if(data===undefined&&['library','history','book-sections','book'].includes(path))path+='?book_id='+encodeURIComponent(activeBookId);return baseApi(path,data)};
+api=async function(path,data){if(data===undefined&&/^(library|history|book-sections|book)(\?|$)/.test(path))path+=(path.includes('?')?'&':'?')+'book_id='+encodeURIComponent(activeBookId);return baseApi(path,data)};
 function rememberBook(id){activeBookId=id;try{localStorage.setItem('atelier-last-book',id)}catch{}}
 const fullDate=s=>new Date(s).toLocaleString('fr-FR',{dateStyle:'medium',timeStyle:'short'});
 let bookDraft=null,bookDirty=false,bookSaving=false,bookEpoch=0,saveTimer=null,bookConflict=false,chapterId=null;
