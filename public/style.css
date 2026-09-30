@@ -10,6 +10,10 @@ button.tag{border:0;font-family:inherit;cursor:pointer}.tagbar button.tag{paddin
 button.tag:hover{background:#e3e5da;color:var(--ink)}button.tag.active{background:var(--green);color:#fff}
 button.tag.active span{margin-left:6px;font-size:13px;line-height:1;opacity:.75}
 .tag-clear{border:0;background:transparent;color:var(--muted);font-family:inherit;font-size:11px;text-decoration:underline;cursor:pointer;padding:4px 2px}
+button.tag.proposed{border:1px dashed #c4ccb8;background:transparent;font-style:italic}
+button.tag.proposed.active{border-style:solid;font-style:normal}
+button.tag.proposed:before{content:'✧ ';opacity:.75}
+.tag-more{font-size:10px;color:var(--muted);padding:4px 2px}
 .tag-clear:hover{color:var(--ink)}
 @media(max-width:700px){.tagbar{width:100%}.tagbar select{flex:1 1 100%;max-width:100%}}
 .rewrite-error{display:grid;gap:5px;margin:14px 0;padding:13px 14px;border:1px solid #dfb6aa;border-radius:8px;background:#fbefeb;color:#8a3f2e}.rewrite-error span,.rewrite-error small{line-height:1.5}
