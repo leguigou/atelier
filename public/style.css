@@ -14,6 +14,14 @@ button.tag.proposed{border:1px dashed #c4ccb8;background:transparent;font-style:
 button.tag.proposed.active{border-style:solid;font-style:normal}
 button.tag.proposed:before{content:'✧ ';opacity:.75}
 .tag-more{font-size:10px;color:var(--muted);padding:4px 2px}
+.block-sources{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px}
+.block-sources span{font-size:10px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted)}
+.block-sources button,.idea-refs button{border:0;background:#f1f1eb;border-radius:4px;padding:4px 7px;font-size:11px;color:var(--green)}
+.block-sources button:hover,.idea-refs button:hover{background:var(--sage)}
+.idea-refs{display:flex;flex-wrap:wrap;gap:6px;flex:1 1 100%;margin-top:7px}
+.book-idea{flex-wrap:wrap}
+.source-mentions{margin:14px 0 0}
+.source-mentions button{margin:0 4px}
 .tag-clear:hover{color:var(--ink)}
 @media(max-width:700px){.tagbar{width:100%}.tagbar select{flex:1 1 100%;max-width:100%}}
 .rewrite-error{display:grid;gap:5px;margin:14px 0;padding:13px 14px;border:1px solid #dfb6aa;border-radius:8px;background:#fbefeb;color:#8a3f2e}.rewrite-error span,.rewrite-error small{line-height:1.5}

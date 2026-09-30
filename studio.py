@@ -10,6 +10,11 @@ try:
     register_heif_opener()
 except ImportError:pass
 
+SOURCE_LINE=re.compile(r'^[ \t]*(Sources?|Références?)\s*:.*$\n?', re.M)
+def strip_source_lines(text):
+    """Drop the « Sources : … » line that generated paragraphs used to carry into the manuscript."""
+    return SOURCE_LINE.sub('', str(text)).strip()
+
 MAX_FILE = 30 * 1024 * 1024
 PDF_LOCK = threading.Lock()  # PDFium is not thread-safe.
 Image.MAX_IMAGE_PIXELS = 40_000_000
@@ -400,27 +405,22 @@ class Studio:
         threading.Thread(target=self.fetch_youtube,args=(s,job),daemon=True).start()
         return dict(source=s,job=job)
     def book_sections(self,b=None):
+        # Reading and export carry the manuscript only: no source list, no reference lines.
+        # Sources stay consultable while reviewing, from the chapter editor.
         b=b or self.book();sections=[]
-        with self.a.connect() as c:ideas={v['id']:v for v in self.a.objects(c,'ideas')};sources={v['id']:v for v in self.a.objects(c,'sources')}
-        used={}
+        with self.a.connect() as c:ideas={v['id']:v for v in self.a.objects(c,'ideas')}
         for ch in b['chapters']:
-            blocks=list(ch['blocks'])
-            for block in blocks:
-                for sid in block.get('source_ids',[]):
-                    if sid in sources:used[sid]=sources[sid]
+            blocks=[]
+            for blk in ch['blocks']:
+                blk=dict(blk)
+                if blk.get('text'):blk['text']=strip_source_lines(blk['text'])
+                blocks.append(blk)
             for iid in ch.get('ideas',[]):
                 i=ideas.get(iid)
                 if not i:continue
                 blocks.append(dict(type='heading',text=i['title']))
                 if i.get('notes'):blocks.append(dict(type='text',text=i['notes']))
-                for ref in i.get('refs',[]):
-                    s=sources.get(ref['source_id'])
-                    if not s:continue
-                    used[s['id']]=s
-                    locator=('p. '+str(ref['page'])) if ref.get('page') else ref.get('section') or (self.a.timestamp(ref['start']) if s['kind'] in ('Vidéo','Short') else 'extrait')
-                    blocks.append(dict(type='quote',text=(ref.get('quote','')+'\n'+s['author']+' — '+s['title']+' · '+locator).strip()))
             sections.append(dict(title=ch['title'],blocks=blocks))
-        if used:sections.append(dict(title='Sources et références',blocks=[dict(type='text',text=f"{s['author']} — {s['title']}\n{s.get('date','')}\n{s.get('url','') or s.get('filename','')}") for s in used.values()]))
         return sections
     def pdf(self,book_id=None):
         from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Image as RLImage, KeepTogether
