@@ -56,7 +56,9 @@ class EditorialTests(unittest.TestCase):
         self.configured();other=self.s.create_book({'title':'Autre'})
         with self.assertRaises(ValueError):prepare(self.s,{'book_id':other['_book_id']})
 
-    def test_generated_block_sources_reach_bibliography(self):
+    def test_generated_block_sources_stay_out_of_the_reading(self):
         b,s=self.configured();b['chapters'][0]['blocks'][0]['source_ids']=[s['id']];b['chapters'][0]['blocks'][0]['text']='Un texte sourcé.'
         b=self.s.save_book(b);sections=self.s.book_sections(b)
-        self.assertEqual(sections[-1]['title'],'Sources et références');self.assertIn('Lecture attentive',sections[-1]['blocks'][0]['text'])
+        self.assertEqual([x['title'] for x in sections],['Commencer'])
+        self.assertNotIn('Sources',sections[0]['blocks'][0]['text'])
+        self.assertEqual(self.s.book(b['_book_id'])['chapters'][0]['blocks'][0]['source_ids'],[s['id']])

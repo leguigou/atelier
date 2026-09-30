@@ -927,6 +927,7 @@ class Handler(BaseHTTPRequestHandler):
                 EDITORIAL_JOBS[job['id']]=job;persist_editorial_job(job)
                 threading.Thread(target=run_editorial_job,args=(job,dict(data)),daemon=True).start()
                 result=public_editorial_job(job)
+            elif route=='/api/editorial-apply':result=studio.editorial_apply(str(data.get('book_id','')),str(data.get('chapter_id','')),data.get('picked') or [])
             elif route=='/api/agent/thread':result=agent_service.create_thread(sys.modules[__name__],studio,data)
             elif route=='/api/agent/chat':result=agent_service.start(sys.modules[__name__],studio,AGENT_JOBS,data)
             elif route=='/api/agent/action':result=agent_service.apply_action(sys.modules[__name__],studio,required(data,'thread_id'),required(data,'action_id'),bool(data.get('approve',True)))

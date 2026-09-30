@@ -174,6 +174,43 @@ class Studio:
             c.execute('UPDATE books SET payload=?,updated=? WHERE id=?',(self.a.dumps(candidate),self.a.now(),bid))
             if bid=='book-main':c.execute("UPDATE settings SET payload=? WHERE id='book'",(self.a.dumps(candidate),))
         return candidate
+    def editorial_apply(self,book_id,chapter_id,picked):
+        """Fix the retained proposal items straight into the stored manuscript.
+
+        Applied here with the server's own revision, so a browser holding a stale draft
+        cannot lose the work to a version conflict: the paragraphs land in the book itself.
+        """
+        bid=book_id or 'book-main'
+        with self.a.connect() as c:row=c.execute('SELECT payload FROM books WHERE id=?',(bid,)).fetchone()
+        if not row:raise ValueError('Projet de livre introuvable.')
+        book=json.loads(row[0]);book['_book_id']=bid
+        proposal=book.get('editorial_proposal') or {}
+        if not proposal:raise ValueError('Aucune proposition en attente pour ce livre.')
+        if proposal.get('applied_at'):raise ValueError('Cette proposition est déjà ajoutée au manuscrit.')
+        plan=proposal.get('mode')=='plan'
+        items=(proposal.get('chapters') if plan else proposal.get('paragraphs')) or []
+        if not items:raise ValueError('Cette proposition ne contient rien à ajouter.')
+        kept=[]
+        for value in (picked or []):
+            try:index=int(value)
+            except (TypeError,ValueError):continue
+            if 0<=index<len(items):kept.append(items[index])
+        if not kept:raise ValueError('Cochez au moins un élément.')
+        evidence={e['id']:e for e in (proposal.get('evidence') or []) if e.get('id')}
+        if plan:
+            for item in kept:
+                book['chapters'].append(dict(id=self.a.uid(),title=str(item.get('title',''))[:500],purpose=str(item.get('purpose',''))[:2500],ideas=[],blocks=[]))
+        else:
+            chapter=next((c for c in book['chapters'] if c.get('id')==chapter_id),None)
+            if not chapter:raise ValueError('Le chapitre a été retiré du livre.')
+            linked=[]
+            for item in kept:
+                refs=[evidence[r] for r in (item.get('evidence_ids') or []) if r in evidence]
+                chapter.setdefault('blocks',[]).append(dict(id=self.a.uid(),type='text',text=str(item.get('text',''))[:12000],source_ids=list(dict.fromkeys(r['source_id'] for r in refs if r.get('source_id')))))
+                linked+= [r['idea_id'] for r in refs if r.get('idea_id')]
+            if linked:chapter['ideas']=list(dict.fromkeys([*(chapter.get('ideas') or []),*linked]))
+        book['editorial_proposal']=dict(proposal,applied_at=self.a.now(),applied_count=len(kept))
+        return self.save_book(book,'Proposition intégrée au manuscrit')
     def history(self,book_id=None):
         with self.a.connect() as c: rows=c.execute('SELECT seq,id,created,label,changes FROM book_versions WHERE book_id=? ORDER BY seq DESC',(book_id or 'book-main',)).fetchall()
         return [{**dict(r),'changes':[{k:v for k,v in x.items() if k not in ('before','after')} for x in json.loads(r['changes'])]} for r in rows]

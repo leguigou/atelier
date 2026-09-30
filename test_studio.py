@@ -52,12 +52,24 @@ class StudioTests(unittest.TestCase):
     def test_a5_pdf_has_text_images_and_dimensions(self):
         b=self.text_book(text=('Écrire un livre avec des sources. ' * 150));a=self.s.store_asset(self.image(),'schema.png');b['chapters'][0]['blocks'].append(dict(id='image',type='image',asset_id=a['id'],caption='Figure de recherche',width=75));self.s.save_book(b)
         raw=self.s.pdf();r=PdfReader(BytesIO(raw));self.assertGreater(len(r.pages),2);self.assertAlmostEqual(float(r.pages[0].mediabox.width),419.5276,places=2);self.assertAlmostEqual(float(r.pages[0].mediabox.height),595.2756,places=2)
-        text='\n'.join(p.extract_text() for p in r.pages);self.assertIn('Figure de recherche',text);self.assertIn('Sources et références',text)
+        text='\n'.join(p.extract_text() for p in r.pages);self.assertIn('Figure de recherche',text);self.assertNotIn('Sources et références',text)
+    def test_proposal_lands_in_the_stored_book_even_with_a_stale_draft(self):
+        # Un brouillon de navigateur périmé ne doit plus faire perdre les paragraphes retenus.
+        b=self.text_book(text='Déjà écrit.')
+        b['editorial_proposal']=dict(mode='draft',book_id=b['_book_id'],chapter_id='chapter1',revision=b['_revision'],created='2026-09-30T00:00:00+00:00',
+            paragraphs=[dict(text='Nouveau paragraphe',evidence_ids=['E1'])],evidence=[dict(id='E1',source_id='source1',idea_id='IDE-001')],
+            questions=[],rationale='',analysis='',interpretation='',ideas_used=[],omitted=[],model='m',notice='')
+        b=self.s.save_book(b)
+        applied=self.s.editorial_apply(b['_book_id'],'chapter1',[0])
+        blocks=self.s.book(b['_book_id'])['chapters'][0]['blocks']
+        self.assertEqual([x['text'] for x in blocks],['Déjà écrit.','Nouveau paragraphe'])
+        self.assertEqual(blocks[-1]['source_ids'],['source1']);self.assertTrue(applied['editorial_proposal']['applied_at'])
+        with self.assertRaises(ValueError):self.s.editorial_apply(b['_book_id'],'chapter1',[0])
     def test_cover_variants_are_validated_and_exported(self):
         b=self.text_book();front=self.s.store_asset(self.image(),'couverture-avant.png');back=self.s.store_asset(self.image(),'couverture-arriere.png')
         b['covers']={'front':front['id'],'back':back['id'],'front_variants':[front['id']],'back_variants':[back['id']]};saved=self.s.save_book(b)
         self.assertEqual(saved['covers']['front'],front['id']);self.assertEqual([a['id'] for a in self.s.assets(True)][:2],[back['id'],front['id']])
-        pdf=PdfReader(BytesIO(self.s.pdf()));self.assertGreaterEqual(len(pdf.pages),4)
+        pdf=PdfReader(BytesIO(self.s.pdf()));self.assertGreaterEqual(len(pdf.pages),3)
         with zipfile.ZipFile(BytesIO(self.s.epub())) as z:
             opf=z.read('OEBPS/book.opf').decode();self.assertIn('properties="cover-image"',opf);self.assertIn('OEBPS/images/'+front['id']+'.png',z.namelist());self.assertIn('OEBPS/images/'+back['id']+'.png',z.namelist())
         invalid=json.loads(json.dumps(saved));invalid['covers']['front']='missing'
