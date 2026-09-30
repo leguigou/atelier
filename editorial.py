@@ -129,13 +129,16 @@ METHOD = (' Procède en quatre temps et rends-les séparément. '
           'Si le chapitre contient déjà du texte écrit, prolonge-le et complète-le au lieu de le répéter ou de repartir de zéro.')
 
 METHOD_REVIEW = (' Ta tâche est une relecture critique, pas une réécriture. Confronte le texte déjà écrit du chapitre aux idées '
-                 'retenues et aux passages de transcription, puis rends trois temps séparés. '
+                 'retenues et aux passages de transcription, puis rends quatre temps séparés. '
                  'analysis: ce que le chapitre affirme, en face de ce que les sources disent réellement — nomme explicitement '
                  'les affirmations sans source, les chiffres non sourcés et les contresens. '
-                 'interpretation: ton bilan de relecture, du plus grave au plus léger (contradictions internes, promesses '
+                 'interpretation: le diagnostic, du plus grave au plus léger (contradictions internes, promesses '
                  'invérifiables, manques, répétitions, passages trop abstraits pour ce lecteur). '
+                 'rationale: ce que tu recommandes, dans l’ordre — pour chaque point l’action concrète à mener (vérifier tel '
+                 'chiffre, nuancer telle affirmation, déplacer tel passage), sans écrire le texte à la place de l’auteur. '
                  'questions: ce qui doit être tranché, vérifié ou complété avant publication, une question par point. '
-                 'Ne propose aucun paragraphe de remplacement : la décision revient à l’auteur.')
+                 'Les quatre temps sont obligatoires et aucun ne se répète : ne propose aucun paragraphe de remplacement, '
+                 'la décision revient à l’auteur.')
 
 
 def propose(studio, data, progress=None):
@@ -145,7 +148,7 @@ def propose(studio, data, progress=None):
     schema = {
         'plan': 'chapters: [{title, purpose, evidence_ids: ["E1"]}], rationale: texte, questions: [texte]',
         'draft': 'analysis: texte (ce que les idées et les extraits disent, avec leurs références), interpretation: texte (l’angle retenu pour ce chapitre), paragraphs: [{text, evidence_ids: ["E1","I1"]}], rationale: texte, questions: [texte]',
-        'review': 'analysis: texte (ce que le chapitre affirme, confronté aux idées et aux passages), interpretation: texte (bilan de relecture, du plus grave au plus léger), rationale: texte, questions: [lacune, contradiction ou vérification nécessaire]'
+        'review': 'analysis: texte (ce que le chapitre affirme, confronté aux idées et aux passages), interpretation: texte (diagnostic, du plus grave au plus léger), rationale: texte (les actions recommandées, dans l’ordre), questions: [lacune, contradiction ou vérification nécessaire]'
     }[mode]
     prompt = app.prompt_text('editorial') + {'draft': METHOD, 'review': METHOD_REVIEW}.get(mode, '') + ' Réponds en JSON avec les champs suivants: ' + schema
     written = '\n\n'.join((blk.get('text') or '').strip() for blk in (chapter.get('blocks') or []) if (blk.get('text') or '').strip()) if chapter else ''
