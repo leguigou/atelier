@@ -15,7 +15,7 @@ services:
       # Jeton Bearer que le client distant doit présenter. Vide = serveur ouvert à tous :
       # ne jamais l'exposer sans cette variable.
       - MCP_HTTP_TOKEN=${MCP_HTTP_TOKEN}
-      # Optionnel : `1` n'expose que les 11 outils de consultation.
+      # Optionnel : `1` n'expose que les 21 outils de consultation.
       - MCP_READ_ONLY=${MCP_READ_ONLY:-}
       # OAuth 2.1 (connecteurs ChatGPT) : état des clients, codes et jetons, sur un volume
       # pour survivre aux redéploiements. MCP_PUBLIC_URL est optionnel : sans lui, l'URL
