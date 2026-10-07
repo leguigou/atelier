@@ -23,20 +23,20 @@ Les fichiers Docker/Dokploy ci-dessous restent une alternative d'hébergement, n
 
 ## Fonctionnalités
 
-- Bibliothèque : recherche dans les titres et le texte intégral ; tri ; filtres par auteur, format, disponibilité, statut, tag et dossier ; favoris.
+- Bibliothèque : recherche SQLite FTS5 dans les titres, auteurs, tags et textes ; plusieurs mots dans un ordre différent, recherche sans accents et préfixes ; extraits classés par pertinence, ouverture directe du passage (timecode, page ou section) ; tri ; filtres par auteur, format, disponibilité, statut, tag et dossier ; favoris.
 - Lecture : lecteur YouTube intégré, liens directs de secours, segments horodatés, sélection de passages, notes, tags, avancement et chapitres manuels.
 - Idées : citations issues des vrais segments, plusieurs références conservées, classement, favoris, relecture, notes de contexte et limites.
 - Rapprochements : similarité lexicale TF-IDF entre idées et tags, regroupement dans des dossiers. Il ne s'agit pas d'embeddings ni d'une validation sémantique ; les formulations différentes peuvent être manquées.
 - Plusieurs projets de livres indépendants : intention, lecteur, voix, sélection de sources, plan, manuscrit et historique propres à chacun ; bibliothèque commune réutilisable.
 - Accompagnement éditorial : parcours Intention → Matière → Plan → Écriture ; proposition de plan, brouillon de chapitre sourcé et relecture des lacunes/contradictions via le modèle configuré. Les propositions sont conservées et leurs éléments sont cochés avant ajout au manuscrit. Aucun remplacement automatique du texte existant.
-- Éditeur mobile : chapitres et blocs réordonnables, texte, intertitres, citations, photos/schémas et sauts de page ; enregistrement automatique, conflits entre appareils détectés, versions datées avec ajouts/retraits et retour à une version antérieure.
+- Éditeur mobile : copie de secours des brouillons dans IndexedDB par livre, récupération après fermeture ou coupure et reprise de l’enregistrement au retour du réseau ; chapitres et blocs réordonnables, texte, intertitres, citations, photos/schémas et sauts de page ; enregistrement automatique, conflits entre appareils détectés, versions datées avec ajouts/retraits et retour à une version antérieure.
 - Médiathèque visuelle commune aux projets : import multiple de photos et schémas, réutilisation dans les chapitres, variantes de première et quatrième de couverture avec choix de la version publiée.
-- Lecture par pages avec navigation tactile/clavier et taille de caractères réglable ; export PDF A5 illustré, EPUB et Markdown avec références.
+- Lecture par pages : balayage horizontal avec une page qui suit le doigt, défilement horizontal au pavé tactile, boutons et clavier ; balayage vers le haut ou défilement vers le haut pour ouvrir les chapitres et leurs pages cliquables ; retour en place pour les gestes courts, respect de la réduction des animations et taille de caractères réglable ; export PDF A5 illustré, EPUB et Markdown avec références.
 - Les couvertures sélectionnées sont intégrées au PDF et à l’EPUB ; la première de couverture est déclarée comme couverture officielle dans le fichier EPUB.
 - Sources complémentaires : YouTube, photos (dont HEIC), schémas, PDF, EPUB sans DRM, DOCX, ODT, TXT/Markdown et texte collé. Import multiple, 30 Mo par fichier. Les originaux sont conservés ; les formats non reconnus restent téléchargeables comme pièces jointes.
 - PDF : extraction du texte et visualisation page par page ; les PDF numérisés nécessitent un texte ajouté manuellement (pas d’OCR). EPUB : extraction du texte et des images, lecture paginée. Les pages des PDF et les sections des livres accompagnent les références.
 - IA : API compatible Chat Completions, modèles actualisables par `/models`, endpoint configurable, DeepSeek Flash/Pro proposés. Analyse par blocs avec idées, synthèses, tags et chapitres à relire. Les citations sont reconstruites à partir des indices de segments valides ; les indices inventés sont rejetés. Les prompts de chaque tâche (analyse, réécriture, chapitres, plan et rédaction, assistant) sont modifiables depuis les paramètres, leur contrat technique restant en lecture seule. Une proposition de chapitres peut être demandée seule, sans relancer l’analyse : elle s’appuie sur la version éditoriale quand elle existe, et ne repropose pas les chapitres déjà acceptés.
-- Stockage SQLite côté serveur, export JSON incluant sources et annotations. Sauvegarde physique du volume recommandée ; aucune restauration JSON par l'interface dans cette version.
+- Stockage SQLite côté serveur ; export JSON conservé via `/api/backup`. **Réglages → Sauvegardes** permet de télécharger et restaurer une archive ZIP contenant les livres, versions, sources, annotations, idées, conversations, prompts personnalisés et tous les originaux/aperçus de la médiathèque. Le mot de passe, les sessions, jetons et clés API sont exclus de cette archive et restent ceux de l’installation courante.
 
 ## Essayer sur cet ordinateur
 
@@ -68,7 +68,7 @@ Le dossier `atelier` est autonome : `corpus/sources.json` et `corpus/ideas.json`
 
 Le démarrage en écoute externe échoue si le mot de passe, HTTPS ou la clé de chiffrement manquent. Les cookies de session sont HttpOnly, SameSite=Strict et Secure en HTTPS. Les sessions expirent après 7 jours. Dix échecs de connexion bloquent les nouvelles tentatives pendant cinq minutes. C'est un espace personnel à mot de passe unique, pas une application multiutilisateur.
 
-Pour les sauvegardes, utiliser l'export JSON depuis l'interface et une sauvegarde cohérente de SQLite (API backup SQLite ou arrêt temporaire du conteneur avant copie du volume). Conserver aussi `ATELIER_ENCRYPTION_KEY` séparément ; sa perte rend la clé IA enregistrée illisible. Le changement du mot de passe doit s'accompagner de la suppression des sessions dans la base si toutes les connexions doivent être révoquées.
+Pour les sauvegardes quotidiennes, utiliser **Réglages → Sauvegardes → Télécharger la sauvegarde complète**. Archive limitée à 256 Mo et contenu décompressé à 512 Mo ; au-delà, sauvegarder le volume avec une copie cohérente de SQLite (API backup SQLite ou arrêt temporaire du conteneur avant copie). Conserver aussi `ATELIER_ENCRYPTION_KEY` séparément ; sa perte rend la clé IA enregistrée illisible. Le changement du mot de passe doit s'accompagner de la suppression des sessions dans la base si toutes les connexions doivent être révoquées.
 
 ## API pour agents et automatisations
 
@@ -131,7 +131,11 @@ L’accompagnateur utilise jusqu’à 60 sources choisies par livre et une séle
 
 Pour commencer : ouvrir **Livre**, créer ou choisir un projet, remplir **Intention**, sélectionner **Matière**, puis demander un **Plan accompagné**. Choisir ensuite un chapitre et utiliser **Écriture accompagnée** pour préparer un brouillon ou relire. La dernière proposition reste accessible ; les précédentes figurent dans l’historique. Le travail manuel reste disponible sans clé IA.
 
-Le site nécessite une connexion au serveur ; il n’est pas utilisable hors ligne. Pour sauvegarder complètement les livres et leurs pièces jointes, conserver une copie cohérente de `data/atelier.sqlite` et du dossier `data/media`. L’export JSON contient les métadonnées des fichiers, pas leurs contenus binaires.
+Le site nécessite une connexion au serveur pour charger les écrans. Un livre déjà ouvert conserve ses modifications dans une copie locale IndexedDB et tente de les enregistrer au retour du réseau. Au prochain accès au livre, un brouillon non enregistré est proposé à la récupération. Une version serveur plus récente déclenche le parcours de conflit ; elle n’est jamais remplacée silencieusement. Une copie locale n’est pas une sauvegarde indépendante : effacer les données du navigateur l’efface aussi.
+
+La restauration ZIP demande de sélectionner l’archive, vérifier ses nombres de livres/sources/fichiers, puis cocher le remplacement. Elle est réservée à une session de l’interface (aucun accès par jeton agent), attend l’arrêt des travaux en cours et conserve une archive de l’état précédent dans `data/backups/avant-restauration-….zip`, téléchargeable à la fin. Les vérifications de schéma et d’intégrité précèdent l’écriture ; les données sont remplacées dans une transaction SQLite. Les anciens fichiers de médias restent sur disque. Les révisions de livres sont renouvelées pour détecter les appareils ouverts sur l’ancienne version. Les archives de sécurité ne sont pas purgées automatiquement.
+
+L’export JSON historique contient les métadonnées des fichiers, pas leurs contenus binaires, et n’est pas un format de restauration. Pour une copie complète de l’installation incluant sa configuration privée, conserver séparément une copie cohérente de `data/atelier.sqlite`, `data/media` et la clé de chiffrement.
 
 ## Vérifications
 

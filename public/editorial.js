@@ -100,4 +100,4 @@ renderLibrary=function(){
   control.innerHTML=`<button type="button" data-library-display="list" aria-pressed="${libraryDisplay==='list'}">${icon('<path d="M9 5h12M9 12h12M9 19h12M3 5h1M3 12h1M3 19h1"/>')}Liste</button><button type="button" data-library-display="cards" aria-pressed="${libraryDisplay==='cards'}">${icon('<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>')}Cartes</button>`;
   $('.resultbar').append(control);control.querySelectorAll('button').forEach(b=>b.onclick=()=>{libraryDisplay=b.dataset.libraryDisplay;try{localStorage.setItem('atelier-library-display',libraryDisplay)}catch{}renderLibrary()});
 };
-init();
+document.addEventListener('DOMContentLoaded',init,{once:true});

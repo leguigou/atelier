@@ -192,7 +192,7 @@ class WorkspaceTests(unittest.TestCase):
         with patch.object(app,'llm_request',return_value=reply),self.assertRaisesRegex(ValueError,'omis ou désordonné'):app.rewrite_transcript(s,{'id':'test-rewrite-invalid','total':1,'done':0,'message':''})
         with app.connect() as c:c.execute("DELETE FROM settings WHERE id='job:test-rewrite-invalid'")
     def test_rewrite_resumes_from_last_completed_batch(self):
-        s=app.get_source('dQTr8VInXUE');original=s['annotation'];s['segments']=[dict(start=i,duration=1,text=('texte '+str(i)+' ')*800) for i in range(3)]
+        s=app.get_source('dQTr8VInXUE');original=s['annotation'];s['segments']=[dict(start=i,duration=1,text=('texte '+str(i)+' ')*1100) for i in range(3)]
         chunks=app.transcript_rewrite_chunks(s['segments']);self.assertEqual(len(chunks),3)
         def answer(chunk):
             a,b=chunk[0]['index'],chunk[-1]['index']
