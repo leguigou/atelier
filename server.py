@@ -4,6 +4,8 @@ from studio import Studio, Conflict, MAX_FILE
 from api_v1 import ApiV1
 from api_docs import openapi_document, api_documentation
 import agent as agent_service
+import backup as backup_service
+import search as search_service
 from http.cookies import SimpleCookie
 from http.client import IncompleteRead, RemoteDisconnected
 from pathlib import Path
@@ -115,6 +117,7 @@ def init():
     load_secret()
     load_password()
     studio.migrate()
+    search_service.init(sys.modules[__name__])
 
 def load_password():
     global PASSWORD_SALT, PASSWORD_HASH
@@ -370,15 +373,8 @@ def folded(value):
     return ''.join(c for c in unicodedata.normalize('NFD',str(value or '')) if unicodedata.category(c)!='Mn').casefold()
 
 def search_source_ids(query):
-    needle=folded(query).strip()
-    if not needle:return []
-    matches=[]
-    with connect() as c:
-        for row in c.execute('SELECT id,payload,text FROM sources'):
-            source=json.loads(row['payload']);ann=annotation(c,row['id'])
-            haystack=' '.join((source.get('title',''),source.get('author',''),row['text'] or '',' '.join(ann.get('tags',[]))))
-            if needle in folded(haystack):matches.append(row['id'])
-    return matches
+    return search_service.source_ids(sys.modules[__name__], query)
+
 
 def llm_request(route, payload=None):
     cfg = settings()
@@ -822,7 +818,12 @@ class Handler(BaseHTTPRequestHandler):
             if p.path=='/api/pdf-page':
                 q=parse_qs(p.query);return self.reply(studio.pdf_page(q['id'][0],int(q.get('page',['1'])[0])),ctype='image/png')
             if p.path=='/api/source': return self.reply(get_source(parse_qs(p.query)['id'][0]))
-            if p.path=='/api/source-search':return self.reply({'ids':search_source_ids(parse_qs(p.query).get('q',[''])[0])})
+            if p.path=='/api/source-search':
+                query=parse_qs(p.query).get('q',[''])[0]
+                return self.reply({'ids':search_source_ids(query), 'passages':search_service.passages(sys.modules[__name__],query)})
+            if p.path=='/api/passages':
+                q=parse_qs(p.query)
+                return self.reply(search_service.passages(sys.modules[__name__],q.get('q',[''])[0],q.get('limit',['30'])[0],q.get('offset',['0'])[0]))
             if p.path=='/api/idea':
                 iid=parse_qs(p.query)['id'][0]
                 with connect() as c:row=c.execute('SELECT payload FROM ideas WHERE id=?',(iid,)).fetchone()
@@ -851,6 +852,17 @@ class Handler(BaseHTTPRequestHandler):
                 jobs=sorted((j for j in AGENT_JOBS.values() if j.get('thread_id')==thread_id),key=lambda j:j.get('created',''),reverse=True)
                 return self.reply(jobs[0] if jobs else {})
             if p.path=='/api/export': return self.reply(export_book(book_id),ctype='text/markdown; charset=utf-8')
+            if p.path=='/api/safety-backup':
+                if not self.session_authorized():return self.reply({'error':'Administration par session requise.'},403)
+                name=parse_qs(p.query).get('name',[''])[0]
+                if not re.fullmatch(r'avant-restauration-[a-f0-9]{16}\.zip',name):raise ValueError('Sauvegarde de sécurité invalide.')
+                path=DB.parent/'backups'/name
+                if not path.is_file():raise ValueError('Sauvegarde de sécurité introuvable.')
+                self.download_name=name;return self.reply(path.read_bytes(),ctype='application/zip')
+            if p.path=='/api/backup.zip':
+                if not self.session_authorized():return self.reply({'error':'Administration par session requise.'},403)
+                self.download_name='atelier-sauvegarde-'+datetime.now().strftime('%Y%m%d-%H%M%S')+'.zip'
+                return self.reply(backup_service.create(sys.modules[__name__]),ctype='application/zip')
             if p.path=='/api/backup':
                 lib=library()
                 with connect() as c:
@@ -863,7 +875,7 @@ class Handler(BaseHTTPRequestHandler):
                     lib['assets']=[{k:v for k,v in dict(r).items() if k not in ('path','preview')} for r in c.execute('SELECT * FROM assets')]
                     lib['backup_note']='Les fichiers binaires sont dans data/media : sauvegardez aussi ce dossier.'
                 return self.reply(lib)
-            files={'/agent.js':('agent.js','text/javascript; charset=utf-8'),'/agent.css':('agent.css','text/css; charset=utf-8'),'/tags.js':('tags.js','text/javascript; charset=utf-8'),'/tags.css':('tags.css','text/css; charset=utf-8'),'/editorial.js':('editorial.js','text/javascript; charset=utf-8'),'/':('index.html','text/html; charset=utf-8'),'/app.js':('app.js','text/javascript; charset=utf-8'),'/studio.js':('studio.js','text/javascript; charset=utf-8'),'/style.css':('style.css','text/css; charset=utf-8'),'/mobile.css':('mobile.css','text/css; charset=utf-8'),'/api.css':('api.css','text/css; charset=utf-8'),'/prompts.css':('prompts.css','text/css; charset=utf-8'),'/favicon.svg':('favicon.svg','image/svg+xml'),'/fonts/BookSerif.ttf':('fonts/BookSerif.ttf','font/ttf')}
+            files={'/safety.js':('safety.js','text/javascript; charset=utf-8'),'/agent.js':('agent.js','text/javascript; charset=utf-8'),'/agent.css':('agent.css','text/css; charset=utf-8'),'/tags.js':('tags.js','text/javascript; charset=utf-8'),'/tags.css':('tags.css','text/css; charset=utf-8'),'/editorial.js':('editorial.js','text/javascript; charset=utf-8'),'/':('index.html','text/html; charset=utf-8'),'/app.js':('app.js','text/javascript; charset=utf-8'),'/studio.js':('studio.js','text/javascript; charset=utf-8'),'/style.css':('style.css','text/css; charset=utf-8'),'/mobile.css':('mobile.css','text/css; charset=utf-8'),'/api.css':('api.css','text/css; charset=utf-8'),'/prompts.css':('prompts.css','text/css; charset=utf-8'),'/favicon.svg':('favicon.svg','image/svg+xml'),'/fonts/BookSerif.ttf':('fonts/BookSerif.ttf','font/ttf')}
             if p.path not in files: return self.reply({'error':'Introuvable'},404)
             name,mime=files[p.path]; return self.reply((ROOT/'public'/name).read_bytes(),ctype=mime)
         except (ValueError,KeyError) as e: self.reply({'error':str(e)},400)
@@ -873,6 +885,16 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.trusted()
             route=urlparse(self.path).path
+            if route in ('/api/backup-inspect','/api/backup-restore'):
+                if not self.authorized():return self.reply({'error':'Connexion requise.'},401)
+                if not self.session_authorized():return self.reply({'error':'Administration par session requise.'},403)
+                length=int(self.headers.get('Content-Length',0))
+                if not 0<length<=backup_service.MAX_ARCHIVE:raise ValueError('Archive limitée à 256 Mo.')
+                raw=self.rfile.read(length)
+                if len(raw)!=length:raise ValueError('Envoi de la sauvegarde interrompu.')
+                if route=='/api/backup-inspect':return self.reply(backup_service.summary(backup_service.inspect(sys.modules[__name__],raw)))
+                if self.headers.get('X-Atelier-Restore')!='replace':raise ValueError('Confirmez le remplacement des données.')
+                return self.reply(backup_service.restore(sys.modules[__name__],raw))
             if route in ('/api/upload','/api/v1/uploads'):
                 if not self.authorized():return self.reply({'error':'Connexion requise.'},401)
                 length=int(self.headers.get('Content-Length',0))
@@ -1068,6 +1090,6 @@ if __name__=='__main__':
     print(f'Atelier des sources : http://127.0.0.1:{PORT}',flush=True)
     if BIND not in ('127.0.0.1','localhost') or os.environ.get('ATELIER_PRODUCTION')=='1':
         from waitress import serve
-        serve(application,host=BIND,port=PORT,threads=8,channel_timeout=60,max_request_body_size=MAX_FILE,max_request_header_size=16384,expose_tracebacks=False)
+        serve(application,host=BIND,port=PORT,threads=8,channel_timeout=60,max_request_body_size=backup_service.MAX_ARCHIVE,max_request_header_size=16384,expose_tracebacks=False)
     else:
         ThreadingHTTPServer((BIND,PORT),Handler).serve_forever()

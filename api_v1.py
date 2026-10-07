@@ -90,7 +90,7 @@ class ApiV1:
         raise ValueError(f'Filtre {name} invalide : utilisez true ou false.')
 
     def source_list(self, query):
-        q = query.get('q', [''])[0].casefold(); kind = query.get('kind', [''])[0]
+        q = query.get('q', [''])[0]; matched=set(self.a.search_source_ids(q)) if q else None; kind = query.get('kind', [''])[0]
         author = query.get('author', [''])[0]; transcript = query.get('has_transcript', [''])[0]
         liked=self.boolean_filter(query,'liked');archived=self.boolean_filter(query,'archived')
         with self.a.connect() as c:
@@ -98,7 +98,7 @@ class ApiV1:
             out = []
             for row in rows:
                 source = json.loads(row['payload']); segments = source.pop('segments', [])
-                if q and q not in (source.get('title','')+' '+source.get('author','')+' '+row['text']).casefold(): continue
+                if matched is not None and source['id'] not in matched: continue
                 if kind and source.get('kind') != kind: continue
                 if author and source.get('author') != author: continue
                 if transcript in ('true','1') and not segments: continue

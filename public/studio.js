@@ -1,3 +1,30 @@
+/* Per-book recovery copies survive tab closure and network interruptions. */
+const AtelierDrafts = (() => {
+  let database;
+  function open() {
+    return database ||= new Promise((resolve, reject) => {
+      const request = indexedDB.open('atelier-drafts', 1);
+      request.onupgradeneeded = () => request.result.createObjectStore('books', {keyPath: 'id'});
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => { database = null; reject(request.error); };
+    });
+  }
+  async function transact(mode, operation) {
+    const db = await open();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('books', mode);
+      const request = operation(tx.objectStore('books'));
+      tx.oncomplete = () => resolve(request.result);
+      tx.onerror = tx.onabort = () => reject(tx.error || Error('Copie locale indisponible.'));
+    });
+  }
+  return {
+    get: id => transact('readonly', store => store.get(id)),
+    put: book => { const copy=structuredClone(book); return transact('readwrite', store => store.put({id:copy._book_id, book:copy, saved:new Date().toISOString()})); },
+    remove: id => transact('readwrite', store => store.delete(id))
+  };
+})();
+
 /* Mobile research, versioned book editor and paginated reader. */
 const previousUI={shell,navigate,renderReader,renderReaderContent,card,ideaModal};
 const newId=()=>crypto.randomUUID?crypto.randomUUID():Array.from(crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,'0')).join('');
@@ -30,6 +57,8 @@ navigate=function(v){
   if(v!=='book')bookDraft=null;
   previousUI.navigate(v);
 };
+window.addEventListener('pagehide',()=>{if(bookDirty)cacheLocalDraft()});
+window.addEventListener('online',()=>{if(bookDirty&&!bookConflict)persistDraft().catch(()=>{})});
 window.addEventListener('beforeunload',e=>{if(bookDirty){e.preventDefault();e.returnValue=''}});
 
 card=function(s){let markup=previousUI.card(s);if(s.preview_id)markup=markup.replace('<div class="document-cover">Aa</div>',`<img src="${assetUrl(s.preview_id)}" alt="" loading="lazy">`);return markup.replace(s.segment_count?'✓ Transcription':'Texte manquant',s.kind==='Image'?'Image':s.kind==='PDF'?'PDF · '+s.page_count+' pages':s.kind==='EPUB'?'Livre EPUB':s.segment_count?'✓ Texte disponible':'Texte manquant')};
@@ -87,20 +116,41 @@ renderReaderContent=function(){
 
 function sourceEditModal(){showModal(`<h2>Compléter la source</h2><form id="editSourceForm"><label>Titre<input name="title" value="${esc(current.title)}" required></label><label>Auteur<input name="author" value="${esc(current.author)}" required></label><label>Description ou transcription à ajouter<textarea name="text" rows="8" placeholder="Ce texte remplacera le texte extrait si vous remplissez ce champ."></textarea></label><p class="small">Le fichier original reste conservé. Laissez le texte vide pour modifier seulement le titre ou l’auteur.</p>${formActions()}</form>`);$('#editSourceForm').onsubmit=e=>{e.preventDefault();run(async()=>{const d=Object.fromEntries(new FormData(e.target));if(!d.text.trim())delete d.text;await api('source-edit',{...d,id:current.id});current=await api('source?id='+current.id);await reload();$('#modal').close();renderReader()},e.submitter)}}
 
-function ensureDraft(){if(!bookDraft){bookDraft=structuredClone(state.book);bookDirty=false;bookConflict=false}if(!bookDraft.chapters.find(c=>c.id===chapterId))chapterId=bookDraft.chapters[0]?.id||null;return bookDraft}
+let localDraftWarning=false;const skippedLocalRecovery=new Set();
+function localDraftError(){if(!localDraftWarning){localDraftWarning=true;toast('La copie de secours locale est indisponible. Enregistrez le livre sur le serveur avant de fermer.')}}
+function cacheLocalDraft(){if(bookDraft&&bookDirty)return AtelierDrafts.put(bookDraft).catch(localDraftError)}
+async function recoverLocalDraft(id){
+  if(skippedLocalRecovery.has(id))return;
+  try{
+    const saved=await AtelierDrafts.get(id);
+    if(!saved||bookDraft?._book_id!==id||bookDirty)return;
+    const content=b=>{const copy=structuredClone(b);delete copy._revision;delete copy._label;return JSON.stringify(copy)};
+    if(content(saved.book)===content(state.book)){await AtelierDrafts.remove(id);return}
+    showModal(`<h2>Retrouver votre brouillon</h2><p>Une copie locale du ${esc(fullDate(saved.saved))} contient du texte qui n’est pas enregistré sur le serveur.</p><p>${saved.book._revision!==state.book._revision?'Le livre a aussi changé sur le serveur. Vous pourrez télécharger votre brouillon pour comparer les deux versions.':'Reprenez votre travail là où vous l’aviez laissé.'}</p><div class="modal-actions"><button id="downloadLocalDraft">Télécharger le brouillon</button><button id="discardLocalDraft">Garder la version du serveur</button><button id="recoverLocalDraft" class="primary">Ouvrir le brouillon</button></div>`);
+    $('#downloadLocalDraft').onclick=()=>download('brouillon-livre.json',JSON.stringify(saved.book,null,2),'application/json');
+    $('#discardLocalDraft').onclick=()=>run(async()=>{await AtelierDrafts.remove(id);$('#modal').close()});
+    $('#recoverLocalDraft').onclick=()=>{
+      bookDraft=structuredClone(saved.book);bookDirty=true;bookEpoch++;bookConflict=bookDraft._revision!==state.book._revision;
+      $('#modal').close();renderBook();statusText('Brouillon local récupéré · à enregistrer',bookConflict);
+      if(bookConflict)conflictModal();
+    };
+  }catch{localDraftError()}
+}
+
+function ensureDraft(){if(!bookDraft){bookDraft=structuredClone(state.book);bookDirty=false;bookConflict=false;recoverLocalDraft(bookDraft._book_id)}if(!bookDraft.chapters.find(c=>c.id===chapterId))chapterId=bookDraft.chapters[0]?.id||null;return bookDraft}
 function currentChapter(){return bookDraft.chapters.find(c=>c.id===chapterId)}
-function changed(label='Modification du livre'){bookDirty=true;bookEpoch++;bookDraft._label=label;statusText('Modifications en attente…');clearTimeout(saveTimer);if(!bookConflict)saveTimer=setTimeout(()=>persistDraft().catch(()=>{}),1600)}
+function changed(label='Modification du livre'){bookDirty=true;bookEpoch++;bookDraft._label=label;cacheLocalDraft();statusText('Modifications en attente…');clearTimeout(saveTimer);if(!bookConflict)saveTimer=setTimeout(()=>persistDraft().catch(()=>{}),1600)}
 async function persistDraft(){
   clearTimeout(saveTimer);if(bookSaving){await new Promise(resolve=>{const i=setInterval(()=>{if(!bookSaving){clearInterval(i);resolve()}},60)});if(bookDirty)return persistDraft();return}
   if(!bookDirty)return;
   if(bookConflict)throw Error('Résolvez le conflit de versions avant de continuer.');
   bookSaving=true;statusText('Enregistrement…');const epoch=bookEpoch,snapshot=structuredClone(bookDraft);
-  try{const result=await api('book',snapshot);state.book=result;if(state.books){const summary=state.books.find(b=>b.id===result._book_id);if(summary){summary.title=result.title;summary.chapters=result.chapters.length}}bookDraft._revision=result._revision;bookDirty=bookEpoch!==epoch;statusText(bookDirty?'Nouvelles modifications…':'✓ Enregistré · '+new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}));if(bookDirty)saveTimer=setTimeout(()=>persistDraft().catch(()=>{}),1000)}
+  try{const result=await api('book',snapshot);state.book=result;if(state.books){const summary=state.books.find(b=>b.id===result._book_id);if(summary){summary.title=result.title;summary.chapters=result.chapters.length}}bookDraft._revision=result._revision;bookDirty=bookEpoch!==epoch;if(bookDirty)cacheLocalDraft();else AtelierDrafts.remove(result._book_id).catch(localDraftError);statusText(bookDirty?'Nouvelles modifications…':'✓ Enregistré · '+new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}));if(bookDirty)saveTimer=setTimeout(()=>persistDraft().catch(()=>{}),1000)}
   catch(e){statusText('Échec de l’enregistrement · brouillon conservé',true);if(e.message.includes('autre appareil')){bookConflict=true;conflictModal()}else toast(e.message);throw e}
   finally{bookSaving=false}
 }
 saveBook=async function(book){state.book=await api('book',book);if(!bookDirty)bookDraft=structuredClone(state.book)};
-function conflictModal(){showModal(`<h2>Deux versions du livre</h2><p>Une autre session a enregistré des modifications. Votre brouillon reste ici ; téléchargez-le avant de recharger la version du serveur.</p><div class="modal-actions"><button id="copyDraft">Télécharger mon brouillon</button><button data-close>Rester ici</button><button id="reloadBook" class="primary">Charger la version du serveur</button></div>`);$('#copyDraft').onclick=()=>download('brouillon-livre.json',JSON.stringify(bookDraft,null,2),'application/json');$('#reloadBook').onclick=()=>run(async()=>{await reload();bookDraft=null;bookDirty=false;bookConflict=false;$('#modal').close();renderBook()})}
+function conflictModal(){showModal(`<h2>Deux versions du livre</h2><p>Une autre session a enregistré des modifications. Votre brouillon reste ici ; téléchargez-le avant de recharger la version du serveur.</p><div class="modal-actions"><button id="copyDraft">Télécharger mon brouillon</button><button data-close>Rester ici</button><button id="reloadBook" class="primary">Charger la version du serveur</button></div>`);$('#copyDraft').onclick=()=>download('brouillon-livre.json',JSON.stringify(bookDraft,null,2),'application/json');$('#reloadBook').onclick=()=>run(async()=>{skippedLocalRecovery.add(bookDraft._book_id);await reload();bookDraft=null;bookDirty=false;bookConflict=false;$('#modal').close();renderBook()})}
 function newBookModal(){showModal(`<h2>Un nouveau projet de livre</h2><p class="small">Le plan, le texte et l’historique seront indépendants. Les sources de la bibliothèque pourront être réutilisées.</p><form id="newBookForm"><label>Titre du projet<input name="title" placeholder="Ex. Mon guide de création d’entreprise" required></label><label>Auteur<input name="author"></label>${formActions('Créer le livre')}</form>`);$('#newBookForm').onsubmit=e=>{e.preventDefault();run(async()=>{await persistDraft();const b=await api('book-create',Object.fromEntries(new FormData(e.target)));rememberBook(b._book_id);await reload();bookDraft=null;chapterId=null;$('#modal').close();renderBook()},e.submitter)}}
 renderBook=function(){
   const b=ensureDraft(),ch=currentChapter();
@@ -146,17 +196,17 @@ async function openSourcePages(s){let blocks=s.reading?.length?s.reading:s.segme
 async function openPages(data){
   reading=data;readingIndex=0;
   const overlay=document.createElement('section');overlay.id='readingOverlay';overlay.className='reading-overlay';overlay.setAttribute('role','dialog');overlay.setAttribute('aria-modal','true');overlay.setAttribute('aria-label','Lecture paginée');
-  overlay.innerHTML=`<header class="reading-header"><button id="closeReading" aria-label="Fermer la lecture"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m12 5-7 7 7 7M5 12h14"/></svg></button><div><strong>${esc(data.title)}</strong><small>${data.book?'Aperçu de lecture · le PDF conserve le format A5':'Lecture du document'}</small></div><button id="readerToc"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg> Sommaire</button><button id="smallerFont" aria-label="Réduire le texte">A−</button><button id="largerFont" aria-label="Agrandir le texte">A+</button></header><div class="reader-toc" id="readerContents" hidden></div><div class="page-stage"><div id="pageFrame" class="page-frame"><div id="pageContent" class="page-content"></div><footer id="pageFooter"></footer></div></div><footer class="reading-controls"><button id="previousPage" aria-label="Page précédente"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m12 5-7 7 7 7M5 12h14"/></svg></button><input id="pageSlider" type="range" min="1" max="1" value="1" aria-label="Aller à la page"><span id="pagePosition" aria-live="polite">Mise en page…</span><button id="nextPage" aria-label="Page suivante"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m12 5 7 7-7 7M5 12h14"/></svg></button></footer><div id="pageMeasure" class="page-content page-measure" aria-hidden="true"></div>`;
+  overlay.innerHTML=`<header class="reading-header"><button id="closeReading" aria-label="Fermer la lecture"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m12 5-7 7 7 7M5 12h14"/></svg></button><div><strong>${esc(data.title)}</strong><small>${data.book?'Aperçu de lecture · le PDF conserve le format A5':'Lecture du document'}</small></div><button id="readerToc" aria-expanded="false" aria-controls="readerContents"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg> Sommaire</button><button id="smallerFont" aria-label="Réduire le texte">A−</button><button id="largerFont" aria-label="Agrandir le texte">A+</button></header><nav class="reader-toc" id="readerContents" aria-label="Chapitres et pages" hidden></nav><div class="page-stage"><div id="pageFrame" class="page-frame"><div class="page-viewport"><div id="pageTrack" class="page-track"><div id="pageContent" class="page-content"></div></div></div><footer id="pageFooter"></footer></div></div><footer class="reading-controls"><button id="previousPage" aria-label="Page précédente"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m12 5-7 7 7 7M5 12h14"/></svg></button><input id="pageSlider" type="range" min="1" max="1" value="1" aria-label="Aller à la page"><span id="pagePosition" aria-live="polite">Mise en page…</span><button id="nextPage" aria-label="Page suivante"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m12 5 7 7-7 7M5 12h14"/></svg></button></footer><div id="pageMeasure" class="page-content page-measure" aria-hidden="true"></div>`;
   document.body.append(overlay);document.body.classList.add('reading-open');$('#app').inert=true;readingAbort=new AbortController();const signal=readingAbort.signal;
-  $('#closeReading').onclick=closePages;$('#closeReading').focus();$('#readerToc').onclick=()=>$('#readerContents').hidden=!$('#readerContents').hidden;
+  $('#closeReading').onclick=closePages;$('#closeReading').focus();$('#readerToc').onclick=()=>setReaderContents($('#readerContents').hidden);
   $('#previousPage').onclick=()=>turnPage(-1);$('#nextPage').onclick=()=>turnPage(1);$('#pageSlider').oninput=e=>{readingIndex=Number(e.target.value)-1;showPage()};
   $('#smallerFont').onclick=()=>{readingFont=Math.max(13,readingFont-1);paginate()};$('#largerFont').onclick=()=>{readingFont=Math.min(24,readingFont+1);paginate()};
-  document.addEventListener('keydown',e=>{if(e.key==='Escape')closePages();else if(e.key==='ArrowRight')turnPage(1);else if(e.key==='ArrowLeft')turnPage(-1);else if(e.key==='Tab'){const focus=[...overlay.querySelectorAll('button:not(:disabled),input')].filter(x=>x.offsetParent!==null),first=focus[0],last=focus.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}}},{signal});
-  let start=null;$('#pageFrame').addEventListener('touchstart',e=>{start={x:e.changedTouches[0].clientX,y:e.changedTouches[0].clientY}},{passive:true,signal});$('#pageFrame').addEventListener('touchend',e=>{if(!start)return;const dx=e.changedTouches[0].clientX-start.x,dy=e.changedTouches[0].clientY-start.y;if(Math.abs(dx)>55&&Math.abs(dx)>Math.abs(dy)*1.4)turnPage(dx<0?1:-1);start=null},{passive:true,signal});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('#readerContents').hidden)setReaderContents(false);else closePages()}else if(['ArrowRight','ArrowLeft'].includes(e.key)&&$('#readerContents').hidden&&!e.target.matches('input,textarea,select')){e.preventDefault();turnPage(e.key==='ArrowRight'?1:-1)}else if(e.key==='Tab'){const focus=[...overlay.querySelectorAll('button:not(:disabled),input')].filter(x=>x.offsetParent!==null),first=focus[0],last=focus.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}}},{signal});
+  installPageGestures(signal);
   window.addEventListener('resize',()=>{clearTimeout(readingResize);readingResize=setTimeout(paginate,180)},{signal});
   if(document.fonts?.ready)await document.fonts.ready;await paginate();
 }
-let pageList=[],tocEntries=[];
+let pageList=[],tocEntries=[],readingMotion=null;
 async function paginate(){
   if(!reading||!$('#pageFrame'))return;
   const frame=$('#pageFrame'),content=$('#pageContent'),measure=$('#pageMeasure');frame.style.setProperty('--read-font',readingFont+'px');
@@ -186,10 +236,118 @@ async function paginate(){
       for(const paragraph of String(block.text||'').split(/\n\s*\n/))addText(paragraph,block.type==='heading'?'h2':block.type==='quote'?'blockquote':'p');
     }
   }flush();if(!pageList.length)pageList=['<p>Ce livre ne contient pas encore de texte.</p>'];
-  readingIndex=Math.min(readingIndex,pageList.length-1);$('#pageSlider').max=pageList.length;$('#readerContents').innerHTML=tocEntries.map(t=>`<button data-toc-page="${t.page}"><span>${esc(t.title)}</span><small>${t.page+1}</small></button>`).join('');$$('[data-toc-page]').forEach(btn=>btn.onclick=()=>{readingIndex=Number(btn.dataset.tocPage);showPage();$('#readerContents').hidden=true});showPage();
+  readingIndex=Math.min(readingIndex,pageList.length-1);$('#pageSlider').max=pageList.length;
+  $('#readerContents').innerHTML='<div class="reader-toc-heading"><strong>Chapitres et pages</strong><button id="closeReaderContents" aria-label="Fermer le sommaire">×</button></div>'+tocEntries.map((t,i)=>{
+    const last=(tocEntries[i+1]?.page??pageList.length)-1;
+    return `<button data-toc-page="${t.page}"><span>${esc(t.title)}</span><small>${last>t.page?'p. '+(t.page+1)+'–'+(last+1):'p. '+(t.page+1)}</small></button>`;
+  }).join('');
+  $('#closeReaderContents').onclick=()=>setReaderContents(false);
+  $$('[data-toc-page]').forEach(btn=>btn.onclick=()=>{readingIndex=Number(btn.dataset.tocPage);showPage();setReaderContents(false)});showPage();
 }
-function showPage(){if(!$('#pageContent'))return;$('#pageContent').innerHTML=pageList[readingIndex];$('#pageFooter').textContent=readingIndex+1;$('#pagePosition').textContent=`${readingIndex+1} / ${pageList.length}`;$('#pageSlider').value=readingIndex+1;$('#previousPage').disabled=readingIndex===0;$('#nextPage').disabled=readingIndex===pageList.length-1}
-function turnPage(direction){const next=readingIndex+direction;if(next<0||next>=pageList.length)return;readingIndex=next;showPage();const frame=$('#pageFrame');if(!matchMedia('(prefers-reduced-motion: reduce)').matches)frame.animate([{opacity:.5,transform:`translateX(${direction*14}px)`},{opacity:1,transform:'translateX(0)'}],{duration:180})}
+function setReaderContents(open){
+  const contents=$('#readerContents');if(!contents)return;
+  contents.hidden=!open;$('#readerToc').setAttribute('aria-expanded',String(open));
+  if(open){
+    resetPageMotion();
+    const active=contents.querySelector('[aria-current="location"]')||contents.querySelector('[data-toc-page]');
+    active?.focus({preventScroll:true});active?.scrollIntoView({block:'nearest'});
+  }else $('#readerToc').focus({preventScroll:true});
+}
+
+function showPage(){if(!$('#pageContent'))return;resetPageMotion();$('#pageContent').innerHTML=pageList[readingIndex];$('#pageFooter').textContent=readingIndex+1;$('#pagePosition').textContent=`${readingIndex+1} / ${pageList.length}`;$('#pageSlider').value=readingIndex+1;$('#previousPage').disabled=readingIndex===0;$('#nextPage').disabled=readingIndex===pageList.length-1;const active=tocEntries.findLast(t=>t.page<=readingIndex);$$('[data-toc-page]').forEach(btn=>{if(active&&Number(btn.dataset.tocPage)===active.page)btn.setAttribute('aria-current','location');else btn.removeAttribute('aria-current')})}
+function resetPageMotion(){
+  readingMotion?.cancel();readingMotion=null;
+  const track=$('#pageTrack');if(!track)return;
+  track.style.transform='';track.classList.remove('is-dragging');
+  track.querySelectorAll('.page-preview').forEach(page=>page.remove());
+}
+function preparePageNeighbors(){
+  const track=$('#pageTrack');if(!track)return;
+  track.querySelectorAll('.page-preview').forEach(page=>page.remove());
+  for(const direction of [-1,1]){
+    const html=pageList[readingIndex+direction];if(html===undefined)continue;
+    const page=document.createElement('div');page.className='page-content page-preview';
+    page.setAttribute('aria-hidden','true');page.inert=true;page.innerHTML=html;
+    page.style.transform=`translateX(${direction*100}%)`;track.append(page);
+  }
+}
+function settlePage(direction=0){
+  const track=$('#pageTrack');if(!track||readingMotion)return;
+  const next=readingIndex+direction;
+  if(next<0||next>=pageList.length)direction=0;
+  track.classList.remove('is-dragging');
+  if(matchMedia('(prefers-reduced-motion: reduce)').matches){readingIndex+=direction;showPage();return}
+  const from=track.style.transform||'translateX(0px)';
+  const motion=track.animate([{transform:from},{transform:`translateX(${-direction*track.clientWidth}px)`}],{duration:direction?260:180,easing:'cubic-bezier(.22,.68,0,1)',fill:'forwards'});
+  readingMotion=motion;
+  motion.finished.then(()=>{if(readingMotion!==motion)return;readingIndex+=direction;showPage()}).catch(()=>{});
+}
+function turnPage(direction){
+  if(readingMotion||readingIndex+direction<0||readingIndex+direction>=pageList.length)return;
+  resetPageMotion();preparePageNeighbors();settlePage(direction);
+}
+function installPageGestures(signal){
+  const stage=$('.page-stage'),track=$('#pageTrack');let drag=null,wheelSum=0,lastWheel=0,wheelLock=0,suppressClick=false;
+  stage.addEventListener('pointerdown',e=>{
+    if(e.pointerType==='mouse'||!e.isPrimary||readingMotion||e.target.closest('a,button,input'))return;
+    if(!$('#readerContents').hidden){setReaderContents(false);return}
+    suppressClick=false;drag={id:e.pointerId,x:e.clientX,y:e.clientY,dx:0,dy:0,axis:null,horizontal:false};
+  },{signal});
+  stage.addEventListener('pointermove',e=>{
+    if(!drag||drag.id!==e.pointerId)return;
+    const dx=e.clientX-drag.x,dy=e.clientY-drag.y;
+    if(!drag.axis){
+      if(Math.max(Math.abs(dx),Math.abs(dy))<10)return;
+      if(Math.abs(dy)>Math.abs(dx)*1.4)drag.axis='vertical';
+      else if(Math.abs(dx)>Math.abs(dy)*1.4)drag.axis='horizontal';
+      else return;
+      stage.setPointerCapture(e.pointerId);
+      if(drag.axis==='horizontal'){drag.horizontal=true;preparePageNeighbors();track.classList.add('is-dragging')}
+    }
+    e.preventDefault();drag.dx=dx;drag.dy=dy;
+    if(!drag.horizontal)return;
+    const atEdge=readingIndex+(dx<0?1:-1)<0||readingIndex+(dx<0?1:-1)>=pageList.length;
+    const offset=Math.max(-track.clientWidth,Math.min(track.clientWidth,dx));
+    track.style.transform=`translateX(${atEdge?offset*.2:offset}px)`;
+  },{passive:false,signal});
+  const end=(e,cancelled=false)=>{
+    if(!drag||drag.id!==e.pointerId)return;
+    const finished=drag;drag=null;
+    if(stage.hasPointerCapture(e.pointerId))stage.releasePointerCapture(e.pointerId);
+    if(!finished.horizontal){
+      if(!cancelled&&finished.axis==='vertical'&&finished.dy<=-55){suppressClick=true;setReaderContents(true)}
+      return;
+    }
+    suppressClick=true;
+    const threshold=Math.min(80,track.clientWidth*.2);
+    settlePage(!cancelled&&Math.abs(finished.dx)>=threshold?(finished.dx<0?1:-1):0);
+  };
+  stage.addEventListener('pointerup',e=>end(e),{signal});
+  stage.addEventListener('pointercancel',e=>end(e,true),{signal});
+  stage.addEventListener('lostpointercapture',e=>{if(e.target===stage)end(e,true)},{signal});
+  stage.addEventListener('click',e=>{if(suppressClick){e.preventDefault();e.stopPropagation();suppressClick=false}},{capture:true,signal});
+  stage.addEventListener('wheel',e=>{
+    if(e.ctrlKey)return;
+    if(Math.abs(e.deltaY)>Math.abs(e.deltaX)){
+      if(e.deltaY>=0)return;
+      e.preventDefault();
+      if(!readingMotion)setReaderContents(true);
+      return;
+    }
+    if(Math.abs(e.deltaX)<1)return;
+    if(!$('#readerContents').hidden)return;
+    e.preventDefault();const time=performance.now();
+    if(time-lastWheel>180)wheelSum=0;
+    lastWheel=time;
+    if(readingMotion||time<wheelLock){wheelLock=Math.max(wheelLock,time+180);return}
+    const delta=e.deltaX*(e.deltaMode===1?16:e.deltaMode===2?track.clientWidth:1);
+    if(wheelSum&&Math.sign(wheelSum)!==Math.sign(delta))wheelSum=0;
+    wheelSum+=delta;
+    if(Math.abs(wheelSum)>=45){turnPage(wheelSum>0?1:-1);wheelSum=0;wheelLock=time+450}
+  },{passive:false,signal});
+  signal.addEventListener('abort',resetPageMotion,{once:true});
+}
+
 function closePages(){readingAbort?.abort();clearTimeout(readingResize);reading=null;$('#readingOverlay')?.remove();document.body.classList.remove('reading-open');$('#app').inert=false;$('#readBook')?.focus()}
 
 addToBookModal=function(id){
