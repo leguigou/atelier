@@ -32,6 +32,32 @@ class StudioTests(unittest.TestCase):
         restored=self.s.restore(one['_revision'],two['_revision']);self.assertEqual(restored['chapters'][0]['blocks'][0]['text'],'Premier paragraphe');self.assertNotEqual(restored['_revision'],one['_revision']);self.assertEqual(len(self.s.history()),4)
     def test_noop_does_not_create_version(self):
         b=self.s.book();self.s.save_book(b);self.assertEqual(len(self.s.history()),1)
+    def test_review_notes_status_history_restore_and_conflict(self):
+        first=self.text_book();b=json.loads(json.dumps(first))
+        b['chapters'][0]['status']='review'
+        b['review_notes']=[dict(id='note1',chapter_id='chapter1',block_id='block1',offset=5,excerpt='Premier',text='Préciser cette idée',done=False)]
+        saved=self.s.save_book(b)
+        self.assertEqual(self.s.book()['review_notes'][0]['text'],'Préciser cette idée')
+        changes=self.s.version(saved['_revision'])['changes']
+        self.assertTrue(any(c['path']=='review_notes' for c in changes))
+        self.assertTrue(any(c['path']=='chapter1/status' for c in changes))
+        with self.assertRaises(Conflict):self.s.save_book(first)
+        restored=self.s.restore(first['_revision'],saved['_revision'])
+        self.assertEqual(restored.get('review_notes',[]),[])
+    def test_invalid_review_data_is_rejected(self):
+        for field,value in [('status','invalid'),('review_notes',[dict(id='n',offset=-1)]),('review_notes',[dict(id='n',text=123)])]:
+            with self.subTest(field=field,value=value):
+                b=self.text_book()
+                if field=='status':b['chapters'][0][field]=value
+                else:b[field]=value
+                with self.assertRaises(ValueError):self.s.save_book(b)
+    def test_reader_keeps_original_text_and_location_without_exporting_source_lines(self):
+        raw='Premier paragraphe\nSources : référence privée\n\nSecond paragraphe'
+        b=self.text_book(text=raw);section=self.s.book_sections(b)[0]
+        self.assertEqual(section['chapter_id'],'chapter1')
+        self.assertEqual(section['blocks'][0]['id'],'block1')
+        self.assertEqual(section['blocks'][0]['original_text'],raw)
+        self.assertNotIn('référence privée',section['blocks'][0]['text'])
     def test_image_upload_preserves_original_normalizes_preview(self):
         raw=self.image();s=self.s.upload(raw,'../photo.png',author='Test')
         self.assertEqual(s['kind'],'Image');a=self.s.asset(s['asset_id']);self.assertEqual(a['name'],'photo.png');self.assertEqual((self.s.media/a['path']).read_bytes(),raw);self.assertTrue((self.s.media/a['preview']).exists())

@@ -36,7 +36,7 @@ function rememberBook(id){activeBookId=id;try{localStorage.setItem('atelier-last
 const fullDate=s=>new Date(s).toLocaleString('fr-FR',{dateStyle:'medium',timeStyle:'short'});
 let bookDraft=null,bookDirty=false,bookSaving=false,bookEpoch=0,saveTimer=null,bookConflict=false,chapterId=null;
 let reading=null,readingIndex=0,readingFont=17,readingAbort=null,readingResize=null;
-function statusText(text,error=false){const e=$('#saveStatus');if(e){e.textContent=text;e.classList.toggle('error',error)}}
+function statusText(text,error=false){for(const selector of ['#saveStatus','#readerPanelStatus']){const e=$(selector);if(e){e.textContent=text;e.classList.toggle('error',error)}}}
 
 shell=function(content){
   previousUI.shell(content);
@@ -146,7 +146,7 @@ async function persistDraft(){
   if(bookConflict)throw Error('Résolvez le conflit de versions avant de continuer.');
   bookSaving=true;statusText('Enregistrement…');const epoch=bookEpoch,snapshot=structuredClone(bookDraft);
   try{const result=await api('book',snapshot);state.book=result;if(state.books){const summary=state.books.find(b=>b.id===result._book_id);if(summary){summary.title=result.title;summary.chapters=result.chapters.length}}bookDraft._revision=result._revision;bookDirty=bookEpoch!==epoch;if(bookDirty)cacheLocalDraft();else AtelierDrafts.remove(result._book_id).catch(localDraftError);statusText(bookDirty?'Nouvelles modifications…':'✓ Enregistré · '+new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}));if(bookDirty)saveTimer=setTimeout(()=>persistDraft().catch(()=>{}),1000)}
-  catch(e){statusText('Échec de l’enregistrement · brouillon conservé',true);if(e.message.includes('autre appareil')){bookConflict=true;conflictModal()}else toast(e.message);throw e}
+  catch(e){statusText('Échec de l’enregistrement · brouillon conservé',true);if(e.message.includes('autre appareil')){bookConflict=true;if(reading?.book_id)closePages();conflictModal()}else toast(e.message);throw e}
   finally{bookSaving=false}
 }
 saveBook=async function(book){state.book=await api('book',book);if(!bookDirty)bookDraft=structuredClone(state.book)};
@@ -156,7 +156,7 @@ renderBook=function(){
   const b=ensureDraft(),ch=currentChapter();
   const srcMentions=ch?ch.blocks.filter(x=>hasSourceMention(x.text)).length:0;
   shell(header('Atelier d’écriture','Votre livre','Écrire, illustrer et retrouver chaque modification.',`<button id="bookHistory"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 11a9 9 0 1 1 2.5 7M3 4v7h7m2-4v5l3 2"/></svg> Historique</button><button class="primary" id="readBook"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 5v16M12 5C9 3 5 3 2 4v15c3-1 7-1 10 2 3-3 7-3 10-2V4c-3-1-7-1-10 1Z"/></svg> Lire le livre</button>`)+`<div class="book-command"><div><span id="saveStatus" role="status">${bookDirty?'Modifications en attente…':'✓ Toutes les modifications sont enregistrées'}</span><span class="small">Enregistrement automatique · versions datées</span></div><button id="saveNow">Enregistrer</button><button id="bookCovers">Couvertures</button><button id="mediaLibrary">Médiathèque</button><button id="exportOptions"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></svg> Exporter</button><button id="bookLayout">Aa Mise en page</button></div><div class="writer-layout"><aside class="writer-outline"><details open><summary>Le livre · ${b.chapters.length} chapitres</summary><button id="bookDetails" class="outline-title">${esc(b.title)}</button><div class="chapter-outline">${b.chapters.map((c,n)=>`<button class="${c.id===chapterId?'active':''}" data-chapter-id="${esc(c.id)}"><small>${String(n+1).padStart(2,'0')}</small><span>${esc(c.title)}</span></button>`).join('')}</div><button id="addBookChapter"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 5v14M5 12h14"/></svg> Nouveau chapitre</button></details><div class="writer-tip">Du texte, une image, une citation : construisez chaque chapitre par blocs. Vos versions précédentes restent accessibles.</div></aside><section class="manuscript">${ch?`<div class="chapter-toolbar"><span class="eyebrow">CHAPITRE ${b.chapters.indexOf(ch)+1}</span><span class="grow"></span><button id="chapterUp" ${b.chapters.indexOf(ch)?'':'disabled'} aria-label="Monter le chapitre"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m5 12 7-7 7 7M12 5v14"/></svg></button><button id="chapterDown" ${b.chapters.indexOf(ch)===b.chapters.length-1?'disabled':''} aria-label="Descendre le chapitre"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m5 12 7 7 7-7M12 5v14"/></svg></button><button id="deleteChapter">Retirer</button></div><label class="sr-only" for="chapterTitle">Titre du chapitre</label><input id="chapterTitle" class="manuscript-title" value="${esc(ch.title)}" placeholder="Titre du chapitre"><div id="bookBlocks">${ch.blocks.map((block,n)=>blockEditor(block,n)).join('')}</div>${srcMentions?`<div class="notice source-mentions">Ce chapitre contient encore ${srcMentions} mention${srcMentions>1?'s':''} de sources dans le texte. <button id="clearSourceMentions">Les retirer du manuscrit</button> Elles restent consultables ci-dessous, cliquables.</div>`:''}<div class="insert-bar"><button data-add-block="text"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 5v14M5 12h14"/></svg> Texte</button><button data-add-block="heading"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 5v14M5 12h14"/></svg> Intertitre</button><button data-add-block="quote"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10 5H4v7h6v3a4 4 0 0 1-4 4m14-14h-6v7h6v3a4 4 0 0 1-4 4"/></svg> Citation</button><button id="insertImage"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 5-5 4 4 4-6 5 7"/></svg> Image</button><button data-add-block="pagebreak">Saut de page</button></div><details class="chapter-evidence"><summary>Idées & références (${ch.ideas.length})</summary><p class="small">Ajoutez une idée depuis « Idées ». Les idées apparaissent après le texte du chapitre dans la lecture ; leurs sources restent ici, cliquables, pour la relecture.</p>${ch.ideas.map(id=>state.ideas.find(i=>i.id===id)).filter(Boolean).sort(favFirst).map(i=>`<div class="book-idea"><span>${esc(i.title)}</span>${ideaRefs(i)}<button data-detach-idea="${esc(i.id)}" aria-label="Retirer cette référence"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6 6 12 12M6 18 18 6"/></svg></button></div>`).join('')}</details>`:`<div class="empty"><span class="book-empty-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 5v16M12 5C9 3 5 3 2 4v15c3-1 7-1 10 2 3-3 7-3 10-2V4c-3-1-7-1-10 1Z"/></svg></span><h2>La première page vous attend.</h2><p>Créez un chapitre pour commencer à écrire.</p><button id="firstChapter" class="primary"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 5v14M5 12h14"/></svg> Mon premier chapitre</button></div>`}</section></div>`);
-  $('#bookHistory').onclick=()=>run(async()=>{await persistDraft();await historyModal()});$('#readBook').onclick=()=>run(async()=>{await persistDraft();const data=await api('book-sections');const covers=data.book.covers||{};const sections=[];if(covers.front)sections.push({title:'Couverture',blocks:[{type:'image',asset_id:covers.front,alt:'Couverture'}]});sections.push(...data.sections);if(covers.back)sections.push({title:'Quatrième de couverture',blocks:[{type:'image',asset_id:covers.back,alt:'Quatrième de couverture'}]});await openPages({title:data.book.title,subtitle:data.book.subtitle,author:data.book.author,sections,book:!covers.front})});$('#saveNow').onclick=()=>run(persistDraft);$('#bookCovers').onclick=coverModal;$('#mediaLibrary').onclick=mediaLibraryModal;$('#bookLayout').onclick=layoutModal;$('#bookDetails').onclick=bookDetailsModal;$('#exportOptions').onclick=exportModal;$('#addBookChapter').onclick=addChapterToBook;$('#firstChapter')?.addEventListener('click',addChapterToBook);
+  $('#bookHistory').onclick=()=>run(async()=>{await persistDraft();await historyModal()});$('#readBook').onclick=()=>run(async()=>{await persistDraft();const data=await api('book-sections');const covers=data.book.covers||{};const sections=[];if(covers.front)sections.push({title:'Couverture',blocks:[{type:'image',asset_id:covers.front,alt:'Couverture'}]});sections.push(...data.sections);if(covers.back)sections.push({title:'Quatrième de couverture',blocks:[{type:'image',asset_id:covers.back,alt:'Quatrième de couverture'}]});await openPages({title:data.book.title,subtitle:data.book.subtitle,author:data.book.author,sections,book:!covers.front,book_id:data.book._book_id})});$('#saveNow').onclick=()=>run(persistDraft);$('#bookCovers').onclick=coverModal;$('#mediaLibrary').onclick=mediaLibraryModal;$('#bookLayout').onclick=layoutModal;$('#bookDetails').onclick=bookDetailsModal;$('#exportOptions').onclick=exportModal;$('#addBookChapter').onclick=addChapterToBook;$('#firstChapter')?.addEventListener('click',addChapterToBook);
   $$('[data-chapter-id]').forEach(btn=>btn.onclick=()=>{chapterId=btn.dataset.chapterId;renderBook()});
   if(ch){$('#chapterTitle').oninput=e=>{ch.title=e.target.value;changed('Titre du chapitre');const label=$(`[data-chapter-id="${chapterId}"] span`);if(label)label.textContent=ch.title};$('#chapterUp').onclick=()=>moveChapter(-1);$('#chapterDown').onclick=()=>moveChapter(1);$('#deleteChapter').onclick=deleteChapter;$('#clearSourceMentions')?.addEventListener('click',()=>{ch.blocks.forEach(x=>{if(x.text)x.text=stripSourceMentions(x.text)});changed('Mentions de sources retirées · '+ch.title);renderBook();toast('Mentions retirées du manuscrit. Les sources restent sous chaque passage.')});
     $$('[data-block-text]').forEach(t=>t.oninput=()=>{ch.blocks.find(b=>b.id===t.dataset.blockText).text=t.value;changed('Texte · '+ch.title)});
@@ -195,45 +195,56 @@ function exportModal(){showModal(`<h2>Emporter votre livre</h2><p>Les illustrati
 async function openSourcePages(s){let blocks=s.reading?.length?s.reading:s.segments.map(x=>({type:'text',text:x.text}));await openPages({title:s.title,author:s.author,sections:[{title:s.title,blocks}],book:false})}
 async function openPages(data){
   reading=data;readingIndex=0;
+  if(typeof ReaderAuthor!=='undefined')ReaderAuthor.begin(data);
   const overlay=document.createElement('section');overlay.id='readingOverlay';overlay.className='reading-overlay';overlay.setAttribute('role','dialog');overlay.setAttribute('aria-modal','true');overlay.setAttribute('aria-label','Lecture paginée');
   overlay.innerHTML=`<header class="reading-header"><button id="closeReading" aria-label="Fermer la lecture"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m12 5-7 7 7 7M5 12h14"/></svg></button><div><strong>${esc(data.title)}</strong><small>${data.book?'Aperçu de lecture · le PDF conserve le format A5':'Lecture du document'}</small></div><button id="readerToc" aria-expanded="false" aria-controls="readerContents"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg> Sommaire</button><button id="smallerFont" aria-label="Réduire le texte">A−</button><button id="largerFont" aria-label="Agrandir le texte">A+</button></header><nav class="reader-toc" id="readerContents" aria-label="Chapitres et pages" hidden></nav><div class="page-stage"><div id="pageFrame" class="page-frame"><div class="page-viewport"><div id="pageTrack" class="page-track"><div id="pageContent" class="page-content"></div></div></div><footer id="pageFooter"></footer></div></div><footer class="reading-controls"><button id="previousPage" aria-label="Page précédente"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m12 5-7 7 7 7M5 12h14"/></svg></button><input id="pageSlider" type="range" min="1" max="1" value="1" aria-label="Aller à la page"><span id="pagePosition" aria-live="polite">Mise en page…</span><button id="nextPage" aria-label="Page suivante"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m12 5 7 7-7 7M5 12h14"/></svg></button></footer><div id="pageMeasure" class="page-content page-measure" aria-hidden="true"></div>`;
   document.body.append(overlay);document.body.classList.add('reading-open');$('#app').inert=true;readingAbort=new AbortController();const signal=readingAbort.signal;
   $('#closeReading').onclick=closePages;$('#closeReading').focus();$('#readerToc').onclick=()=>setReaderContents($('#readerContents').hidden);
   $('#previousPage').onclick=()=>turnPage(-1);$('#nextPage').onclick=()=>turnPage(1);$('#pageSlider').oninput=e=>{readingIndex=Number(e.target.value)-1;showPage()};
   $('#smallerFont').onclick=()=>{readingFont=Math.max(13,readingFont-1);paginate()};$('#largerFont').onclick=()=>{readingFont=Math.min(24,readingFont+1);paginate()};
-  document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('#readerContents').hidden)setReaderContents(false);else closePages()}else if(['ArrowRight','ArrowLeft'].includes(e.key)&&$('#readerContents').hidden&&!e.target.matches('input,textarea,select')){e.preventDefault();turnPage(e.key==='ArrowRight'?1:-1)}else if(e.key==='Tab'){const focus=[...overlay.querySelectorAll('button:not(:disabled),input')].filter(x=>x.offsetParent!==null),first=focus[0],last=focus.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}}},{signal});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(typeof ReaderAuthor!=='undefined'&&ReaderAuthor.escape()){e.preventDefault();return}if(!$('#readerContents').hidden)setReaderContents(false);else closePages()}else if(['ArrowRight','ArrowLeft'].includes(e.key)&&$('#readerContents').hidden&&!$('#readingOverlay')?.classList.contains('reader-panel-open')&&!e.target.matches('input,textarea,select')){e.preventDefault();turnPage(e.key==='ArrowRight'?1:-1)}else if(e.key==='Tab'){const focus=[...overlay.querySelectorAll('button:not(:disabled),input,textarea,select,a[href],[data-read-block]')].filter(x=>x.offsetParent!==null&&!x.closest('[inert]')),first=focus[0],last=focus.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}}},{signal});
+  if(typeof ReaderAuthor!=='undefined')ReaderAuthor.install(signal);
   installPageGestures(signal);
   window.addEventListener('resize',()=>{clearTimeout(readingResize);readingResize=setTimeout(paginate,180)},{signal});
   if(document.fonts?.ready)await document.fonts.ready;await paginate();
 }
-let pageList=[],tocEntries=[],readingMotion=null;
+let pageList=[],tocEntries=[],readingMotion=null,paginationRun=0;
 async function paginate(){
   if(!reading||!$('#pageFrame'))return;
+  const run=++paginationRun;
   const frame=$('#pageFrame'),content=$('#pageContent'),measure=$('#pageMeasure');frame.style.setProperty('--read-font',readingFont+'px');
   const width=content.clientWidth,height=content.clientHeight;measure.style.width=width+'px';measure.style.height=height+'px';measure.style.fontSize=readingFont+'px';measure.style.lineHeight='1.58';
   if(!width||!height)return;
+  const anchor=typeof ReaderAuthor!=='undefined'?ReaderAuthor.anchor():null;
   pageList=[];tocEntries=[];let page='';measure.innerHTML='';
   const flush=()=>{if(page){pageList.push(page);page='';measure.innerHTML=''}};
   const fits=html=>{measure.innerHTML=page+html;return measure.scrollHeight<=height+1};
-  const addText=(text,tag='p')=>{
-    let words=String(text).split(/\s+/).filter(Boolean);if(!words.length)return;
-    while(words.length){const full=`<${tag}>${esc(words.join(' '))}</${tag}>`;if(fits(full)){page+=full;break}
-      let lo=0,hi=words.length;while(lo<hi){const mid=Math.ceil((lo+hi)/2);if(fits(`<${tag}>${esc(words.slice(0,mid).join(' '))}</${tag}>`))lo=mid;else hi=mid-1}
+  const addText=(text,tag='p',meta=null)=>{
+    let words=[...String(text).matchAll(/\S+/g)];if(!words.length)return;
+    const html=count=>{const part=words.slice(0,count),attrs=meta?` tabindex="0" data-read-chapter="${esc(meta.chapter)}" data-read-block="${esc(meta.block)}" data-read-start="${meta.start+part[0].index}" data-read-end="${meta.start+part.at(-1).index+part.at(-1)[0].length}" data-paragraph-start="${meta.start}" data-paragraph-end="${meta.end}"`:'';return `<${tag}${attrs}>${esc(part.map(w=>w[0]).join(' '))}</${tag}>`};
+    while(words.length){const full=html(words.length);if(fits(full)){page+=full;break}
+      let lo=0,hi=words.length;while(lo<hi){const mid=Math.ceil((lo+hi)/2);if(fits(html(mid)))lo=mid;else hi=mid-1}
       if(lo===0&&page){flush();continue}if(lo===0)lo=1;
-      page+=`<${tag}>${esc(words.slice(0,lo).join(' '))}</${tag}>`;words=words.slice(lo);flush();
+      page+=html(lo);words=words.slice(lo);flush();
     }
   };
   if(reading.book){addText(reading.title,'h1');if(reading.subtitle)addText(reading.subtitle);if(reading.author)addText(reading.author);flush()}
-  for(const section of reading.sections){flush();tocEntries.push({title:section.title,page:pageList.length});addText(section.title,'h1');
+  for(const section of reading.sections){flush();tocEntries.push({title:section.title,page:pageList.length,chapter_id:section.chapter_id,status:section.status});addText(section.title,'h1');
     for(const block of section.blocks){
       if(block.type==='pagebreak'){flush();continue}
       if(block.type==='image'){
         const im=new Image();im.src=assetUrl(block.asset_id);await new Promise(resolve=>{im.onload=resolve;im.onerror=resolve;if(im.complete)resolve()});
+        if(run!==paginationRun||!frame.isConnected||!reading)return;
         const ratio=(im.naturalHeight||600)/(im.naturalWidth||800),desired=Math.min(width*(Number(block.width)||100)/100,(height-75)/ratio),imageHeight=desired*ratio;
         const figure=`<figure><img src="${assetUrl(block.asset_id)}" alt="${esc(block.alt||block.caption||'Illustration')}" style="width:${desired}px;height:${imageHeight}px"><figcaption>${esc(block.caption||'')}</figcaption></figure>`;
         if(!fits(figure))flush();if(fits(figure))page+=figure;else{const reduced=figure.replace(`height:${imageHeight}px`,`height:${Math.max(60,height-120)}px`);page+=reduced}continue;
       }
-      for(const paragraph of String(block.text||'').split(/\n\s*\n/))addText(paragraph,block.type==='heading'?'h2':block.type==='quote'?'blockquote':'p');
+      const raw=String(block.original_text??block.text??'');let offset=0;
+      for(const paragraph of raw.split(/\n\s*\n/)){
+        const start=raw.indexOf(paragraph,offset);offset=start+paragraph.length;
+        const text=reading.book_id?paragraph.replace(/^[ \t]*(Sources?|Références?)\s*:.*$/gm,line=>' '.repeat(line.length)):paragraph;
+        addText(text,block.type==='heading'?'h2':block.type==='quote'?'blockquote':'p',reading.book_id&&section.chapter_id&&block.id?{chapter:section.chapter_id,block:block.id,start,end:offset}:null);
+      }
     }
   }flush();if(!pageList.length)pageList=['<p>Ce livre ne contient pas encore de texte.</p>'];
   readingIndex=Math.min(readingIndex,pageList.length-1);$('#pageSlider').max=pageList.length;
@@ -242,7 +253,8 @@ async function paginate(){
     return `<button data-toc-page="${t.page}"><span>${esc(t.title)}</span><small>${last>t.page?'p. '+(t.page+1)+'–'+(last+1):'p. '+(t.page+1)}</small></button>`;
   }).join('');
   $('#closeReaderContents').onclick=()=>setReaderContents(false);
-  $$('[data-toc-page]').forEach(btn=>btn.onclick=()=>{readingIndex=Number(btn.dataset.tocPage);showPage();setReaderContents(false)});showPage();
+  $$('[data-toc-page]').forEach(btn=>btn.onclick=()=>{readingIndex=Number(btn.dataset.tocPage);showPage();setReaderContents(false)});if(typeof ReaderAuthor!=='undefined')ReaderAuthor.restore(anchor);showPage();
+  if(typeof ReaderAuthor!=='undefined')ReaderAuthor.decorateContents();
 }
 function setReaderContents(open){
   const contents=$('#readerContents');if(!contents)return;
@@ -254,7 +266,7 @@ function setReaderContents(open){
   }else $('#readerToc').focus({preventScroll:true});
 }
 
-function showPage(){if(!$('#pageContent'))return;resetPageMotion();$('#pageContent').innerHTML=pageList[readingIndex];$('#pageFooter').textContent=readingIndex+1;$('#pagePosition').textContent=`${readingIndex+1} / ${pageList.length}`;$('#pageSlider').value=readingIndex+1;$('#previousPage').disabled=readingIndex===0;$('#nextPage').disabled=readingIndex===pageList.length-1;const active=tocEntries.findLast(t=>t.page<=readingIndex);$$('[data-toc-page]').forEach(btn=>{if(active&&Number(btn.dataset.tocPage)===active.page)btn.setAttribute('aria-current','location');else btn.removeAttribute('aria-current')})}
+function showPage(){if(!$('#pageContent'))return;resetPageMotion();$('#pageContent').innerHTML=pageList[readingIndex];$('#pageFooter').textContent=readingIndex+1;$('#pagePosition').textContent=`${readingIndex+1} / ${pageList.length}`;$('#pageSlider').value=readingIndex+1;$('#previousPage').disabled=readingIndex===0;$('#nextPage').disabled=readingIndex===pageList.length-1;const active=tocEntries.findLast(t=>t.page<=readingIndex);$$('[data-toc-page]').forEach(btn=>{if(active&&Number(btn.dataset.tocPage)===active.page)btn.setAttribute('aria-current','location');else btn.removeAttribute('aria-current')});if(typeof ReaderAuthor!=='undefined')ReaderAuthor.pageShown()}
 function resetPageMotion(){
   readingMotion?.cancel();readingMotion=null;
   const track=$('#pageTrack');if(!track)return;
@@ -287,9 +299,9 @@ function turnPage(direction){
   resetPageMotion();preparePageNeighbors();settlePage(direction);
 }
 function installPageGestures(signal){
-  const stage=$('.page-stage'),track=$('#pageTrack');let drag=null,wheelSum=0,lastWheel=0,wheelLock=0,suppressClick=false;
+  const stage=$('.page-stage'),track=$('#pageTrack');let drag=null,wheelLock=0,suppressClick=false;
   stage.addEventListener('pointerdown',e=>{
-    if(e.pointerType==='mouse'||!e.isPrimary||readingMotion||e.target.closest('a,button,input'))return;
+    if($('#readingOverlay').classList.contains('reader-panel-open')||$('#readingOverlay').classList.contains('reader-selecting')||e.pointerType==='mouse'||!e.isPrimary||readingMotion||e.target.closest('a,button,input'))return;
     if(!$('#readerContents').hidden){setReaderContents(false);return}
     suppressClick=false;drag={id:e.pointerId,x:e.clientX,y:e.clientY,dx:0,dy:0,axis:null,horizontal:false};
   },{signal});
@@ -297,7 +309,7 @@ function installPageGestures(signal){
     if(!drag||drag.id!==e.pointerId)return;
     const dx=e.clientX-drag.x,dy=e.clientY-drag.y;
     if(!drag.axis){
-      if(Math.max(Math.abs(dx),Math.abs(dy))<10)return;
+      if(Math.max(Math.abs(dx),Math.abs(dy))<4)return;
       if(Math.abs(dy)>Math.abs(dx)*1.4)drag.axis='vertical';
       else if(Math.abs(dx)>Math.abs(dy)*1.4)drag.axis='horizontal';
       else return;
@@ -319,36 +331,31 @@ function installPageGestures(signal){
       return;
     }
     suppressClick=true;
-    const threshold=Math.min(80,track.clientWidth*.2);
-    settlePage(!cancelled&&Math.abs(finished.dx)>=threshold?(finished.dx<0?1:-1):0);
+    // Once a horizontal gesture is recognised, always finish the page turn.
+    settlePage(!cancelled&&finished.dx!==0?(finished.dx<0?1:-1):0);
   };
   stage.addEventListener('pointerup',e=>end(e),{signal});
   stage.addEventListener('pointercancel',e=>end(e,true),{signal});
   stage.addEventListener('lostpointercapture',e=>{if(e.target===stage)end(e,true)},{signal});
   stage.addEventListener('click',e=>{if(suppressClick){e.preventDefault();e.stopPropagation();suppressClick=false}},{capture:true,signal});
   stage.addEventListener('wheel',e=>{
-    if(e.ctrlKey)return;
+    if(e.ctrlKey||$('#readingOverlay').classList.contains('reader-panel-open'))return;
     if(Math.abs(e.deltaY)>Math.abs(e.deltaX)){
       if(e.deltaY>=0)return;
       e.preventDefault();
       if(!readingMotion)setReaderContents(true);
       return;
     }
-    if(Math.abs(e.deltaX)<1)return;
+    if(e.deltaX===0)return;
     if(!$('#readerContents').hidden)return;
     e.preventDefault();const time=performance.now();
-    if(time-lastWheel>180)wheelSum=0;
-    lastWheel=time;
     if(readingMotion||time<wheelLock){wheelLock=Math.max(wheelLock,time+180);return}
-    const delta=e.deltaX*(e.deltaMode===1?16:e.deltaMode===2?track.clientWidth:1);
-    if(wheelSum&&Math.sign(wheelSum)!==Math.sign(delta))wheelSum=0;
-    wheelSum+=delta;
-    if(Math.abs(wheelSum)>=45){turnPage(wheelSum>0?1:-1);wheelSum=0;wheelLock=time+450}
+    turnPage(e.deltaX>0?1:-1);wheelLock=time+450;
   },{passive:false,signal});
   signal.addEventListener('abort',resetPageMotion,{once:true});
 }
 
-function closePages(){readingAbort?.abort();clearTimeout(readingResize);reading=null;$('#readingOverlay')?.remove();document.body.classList.remove('reading-open');$('#app').inert=false;$('#readBook')?.focus()}
+function closePages(){if(typeof ReaderAuthor!=='undefined')ReaderAuthor.end();readingAbort?.abort();clearTimeout(readingResize);reading=null;$('#readingOverlay')?.remove();document.body.classList.remove('reading-open');$('#app').inert=false;$('#readBook')?.focus()}
 
 addToBookModal=function(id){
   let targetBook=state.book;

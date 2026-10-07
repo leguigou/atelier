@@ -137,6 +137,16 @@ La restauration ZIP demande de sélectionner l’archive, vérifier ses nombres 
 
 L’export JSON historique contient les métadonnées des fichiers, pas leurs contenus binaires, et n’est pas un format de restauration. Pour une copie complète de l’installation incluant sa configuration privée, conserver séparément une copie cohérente de `data/atelier.sqlite`, `data/media` et la clé de chiffrement.
 
+## Éditer pendant la lecture
+
+Dans **Mon livre**, les modes **Écrire**, **Lire** et **Relire** donnent accès au manuscrit, à la lecture paginée et aux notes de relecture. Les commandes de couverture, médias, export, mise en page et historique sont regroupées dans **Outils du livre**.
+
+Pendant la lecture, touchez un paragraphe puis **Modifier**. Un panneau latéral s’ouvre sur ordinateur ; sur téléphone, il occupe l’écran. Le paragraphe entier est éditable, même s’il s’étend sur plusieurs pages, avec le contexte précédent et suivant. **Enregistrer et reprendre la lecture** retrouve ce passage après la nouvelle pagination. Les corrections et les notes utilisent les mêmes brouillons locaux, versions et protections contre les conflits que l’éditeur.
+
+**À revoir / Note** ajoute une note au passage et place le chapitre dans l’état **À revoir**. **Relire** affiche les notes, permet de retrouver leur passage et de les marquer comme terminées. Les notes restent conservées si leur passage est retiré. **Sources** consulte les références associées sans quitter la lecture. Le sommaire affiche les pages, le statut et une commande pour éditer le chapitre. Les statuts disponibles sont **Brouillon**, **À revoir** et **Terminé**.
+
+La dernière position de lecture est mémorisée pour chaque livre sur ce navigateur, par chapitre, bloc et position dans le texte ; elle est conservée lors des changements de taille de caractères et d’écran. Sur téléphone, **Sélectionner du texte** permet la sélection native ; **Reprendre les gestes** réactive le changement de page par balayage. Les flèches et le sommaire restent disponibles dans les deux cas.
+
 ## Vérifications
 
 ```powershell
@@ -145,7 +155,10 @@ python -m unittest discover -s atelier -p 'test_*.py' -v
 node --check atelier/public/app.js
 node --check atelier/public/studio.js
 node --check atelier/public/editorial.js
+node --check atelier/public/author.js
 ```
+
+Le parcours de lecture est aussi vérifié dans un vrai navigateur avec une base temporaire : `node atelier/tests/reader-author.cjs` (Playwright et son Chromium doivent être installés). Il couvre les écrans ordinateur et téléphone, les sources, l’édition, les notes, la reprise après pagination, les statuts, la panne réseau et le conflit entre sessions.
 
 Installer `requirements.txt` avant les tests pour vérifier aussi le coffre chiffré. Le déploiement utilise Waitress ; le serveur HTTP de développement est réservé à l'aperçu local.
 

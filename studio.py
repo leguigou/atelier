@@ -114,6 +114,7 @@ class Studio:
             cid=self.a.required(ch,'id',100)
             if cid in ids:raise ValueError('Identifiant de chapitre dupliqué.')
             ids.add(cid)
+            if ch.get('status','draft') not in ('draft','review','done'):raise ValueError('Statut de chapitre invalide.')
             if not isinstance(ch.get('blocks'),list) or len(ch['blocks'])>2000:raise ValueError('Blocs invalides.')
             bid=set()
             for block in ch['blocks']:
@@ -126,6 +127,17 @@ class Studio:
                     if not self.asset(block.get('asset_id','')).get('preview'):raise ValueError('Image indisponible.')
                 elif not isinstance(block.get('text',''),str):raise ValueError('Texte invalide.')
             ch['notes']='\n\n'.join(x.get('text','') for x in ch['blocks'] if x['type'] in ('text','heading','quote'))
+        reviews=b.get('review_notes',[])
+        if not isinstance(reviews,list) or len(reviews)>5000:raise ValueError('Notes de relecture invalides.')
+        note_ids=set()
+        for note in reviews:
+            if not isinstance(note,dict):raise ValueError('Note de relecture invalide.')
+            nid=self.a.required(note,'id',100)
+            if nid in note_ids:raise ValueError('Identifiant de note dupliqué.')
+            note_ids.add(nid)
+            for key,limit in [('chapter_id',100),('block_id',100),('text',6000),('excerpt',1000)]:
+                if not isinstance(note.get(key,''),str) or len(note.get(key,''))>limit:raise ValueError('Note de relecture invalide.')
+            if type(note.get('offset',0)) is not int or not 0<=note.get('offset',0)<=5_000_000 or type(note.get('done',False)) is not bool:raise ValueError('Emplacement de note invalide.')
         layout=b.get('layout',{})
         for key,lo,hi in [('font_size',9,16),('line_height',1.2,2),('margin',10,25)]:
             if not lo<=float(layout.get(key,lo))<=hi:raise ValueError('Réglage de mise en page invalide.')
@@ -135,6 +147,7 @@ class Studio:
             if a!=b:out.append(dict(path=path,label=label,before=a,after=b,**extra))
         for k,l in [('title','Titre du livre'),('subtitle','Sous-titre'),('author','Auteur'),('covers','Couvertures'),('layout','Mise en page'),('brief','Intention et lecteur'),('source_ids','Sources du projet'),('editorial_proposal','Proposition de l’accompagnateur')]:add(k,l,old.get(k,''),new.get(k,''))
         oc={x['id']:x for x in old.get('chapters',[])};nc={x['id']:x for x in new.get('chapters',[])}
+        add('review_notes','Notes de relecture',old.get('review_notes',[]),new.get('review_notes',[]))
         add('order','Ordre des chapitres',[x['id'] for x in old.get('chapters',[])],[x['id'] for x in new.get('chapters',[])])
         for cid in dict.fromkeys([*oc,*nc]):
             a=oc.get(cid,{});b=nc.get(cid,{})
@@ -143,6 +156,7 @@ class Studio:
                 add('chapter/'+cid,('Chapitre ajouté : ' if b else 'Chapitre retiré : ')+label,a or '',b or '',chapter_id=cid);continue
             add(cid+'/title','Titre · '+label,a['title'],b['title'],chapter_id=cid)
             add(cid+'/purpose','Objectif · '+label,a.get('purpose',''),b.get('purpose',''),chapter_id=cid)
+            add(cid+'/status','Statut · '+label,a.get('status','draft'),b.get('status','draft'),chapter_id=cid)
             add(cid+'/ideas','Idées sources · '+label,a.get('ideas',[]),b.get('ideas',[]),chapter_id=cid)
             ab={v['id']:v for v in a['blocks']};bb={v['id']:v for v in b['blocks']}
             add(cid+'/order','Ordre des blocs · '+label,[v['id'] for v in a['blocks']],[v['id'] for v in b['blocks']],chapter_id=cid)
@@ -450,6 +464,7 @@ class Studio:
             blocks=[]
             for blk in ch['blocks']:
                 blk=dict(blk)
+                blk['original_text']=blk.get('text','')
                 if blk.get('text'):blk['text']=strip_source_lines(blk['text'])
                 blocks.append(blk)
             for iid in ch.get('ideas',[]):
@@ -457,7 +472,7 @@ class Studio:
                 if not i:continue
                 blocks.append(dict(type='heading',text=i['title']))
                 if i.get('notes'):blocks.append(dict(type='text',text=i['notes']))
-            sections.append(dict(title=ch['title'],blocks=blocks))
+            sections.append(dict(title=ch['title'],chapter_id=ch['id'],status=ch.get('status','draft'),blocks=blocks))
         return sections
     def pdf(self,book_id=None):
         from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Image as RLImage, KeepTogether
