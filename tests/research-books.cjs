@@ -11,9 +11,9 @@ const assert=require('node:assert/strict');
     browser=await chromium.launch({headless:true});
     for(const width of [1280,390]){
       const context=await browser.newContext({viewport:{width,height:900},hasTouch:true});
-      const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+      const page=await context.newPage(),errors=[],failed=[];page.on('pageerror',e=>errors.push(e.message));page.on('requestfailed',r=>failed.push({url:r.url(),error:r.failure()?.errorText}));
       const nav=v=>page.locator(width<760?`[data-mobile-nav="${v}"]`:`[data-nav="${v}"]`).click();
-      await page.goto(base);await page.locator('#createResearchBook').waitFor();assert.equal(await page.locator('.project-book').first().evaluate(e=>getComputedStyle(e).display),'flex');
+      await page.goto(base);try{await page.locator('#createResearchBook').waitFor()}catch(e){console.error('Startup failed:',width,errors,failed,await page.locator('#app').innerText(),await page.evaluate(()=>({view,ready:document.readyState,scriptUrls:[...document.scripts].map(s=>s.src)})));throw e};assert.equal(await page.locator('.project-book').first().evaluate(e=>getComputedStyle(e).display),'flex');
       await page.locator('#createResearchBook').click();await page.locator('#newBookForm [name=title]').fill('Livre A '+width);
       await page.locator('#newBookForm [name=description]').fill('Une recherche sur les relations.');
       await page.locator('#newBookForm button[type=submit]').click();await page.locator('#overviewSources').waitFor();
