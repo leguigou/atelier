@@ -3,7 +3,8 @@ let commonResearch=false, researchFolder='', researchIdeaSort='recent';
 view='books';
 const researchOf=()=>state.book.research||{source_ids:state.book.source_ids||[],idea_ids:[],folders:[],source_notes:{},idea_notes:{}};
 const projectContext=()=>!commonResearch&&!['books','settings'].includes(view);
-const researchOriginal={shell,render,navigate,filtered,renderLibrary,renderIdeas,renderFolders,renderReader,ideaModal,card,api,uploadFile,addArchiveTab};
+const researchOriginal={shell,render,navigate,filtered,renderLibrary,renderIdeas,renderFolders,renderReader,ideaModal,ideaCard,card,api,uploadFile,addArchiveTab};
+let commonAssignmentFilter='', sharedIdeaSelection=new Set();
 
 async function changeResearch(data){
   await persistDraft();
@@ -16,10 +17,10 @@ async function openResearchBook(id){
   rememberBook(id);bookDraft=null;chapterId=null;commonResearch=false;researchFolder='';resetResearchFilters();
   await reload();view='overview';render();
 }
-function resetResearchFilters(){query='';author='';status='';kind='';folder='';scope='all';tagsSel=[];page=1;selected.clear();sourceSearchIds=null;sourceSearchPassages=null;clearTimeout(sourceSearchTimer);ideaQuery='';ideaMode='all';ideaFolder='';ideaTags=[];ideaVisibleLimit=60}
+function resetResearchFilters(){query='';author='';status='';kind='';folder='';scope='all';tagsSel=[];page=1;selected.clear();sharedIdeaSelection.clear();commonAssignmentFilter='';sourceSearchIds=null;sourceSearchPassages=null;clearTimeout(sourceSearchTimer);ideaQuery='';ideaMode='all';ideaFolder='';ideaTags=[];ideaVisibleLimit=60}
 navigate=function(v){
   if(v==='common'){commonResearch=true;researchFolder='';resetResearchFilters();v='library'}
-  else if(['overview','ideas','folders','book'].includes(v)&&commonResearch){commonResearch=false;researchFolder='';resetResearchFilters()}
+  else if(['books','overview','ideas','folders','book'].includes(v)&&commonResearch){commonResearch=false;researchFolder='';resetResearchFilters()}
   if(['books','overview','folders'].includes(v))researchFolder='';
   researchOriginal.navigate(v);
 };
@@ -30,14 +31,15 @@ render=function(){
 };
 shell=function(content){
   researchOriginal.shell(content);
+  $('.main').classList.toggle('shared-library',commonResearch&&['library','ideas'].includes(view));
   $('.project-switcher')?.remove();
   const nav=[['books','▤','Mes livres'],['overview','▤','Vue d’ensemble'],['folders','▱','Dossiers'],['library','▦','Sources'],['ideas','✧','Idées'],['book','▤','Manuscrit'],['common','▦','Bibliothèque commune'],['settings','⚙','Réglages']];
-  $('.nav').innerHTML=nav.map(([v,i,l])=>`<button data-nav="${v}" class="${(v==='common'?commonResearch&&view==='library':v===view&&!(v==='library'&&commonResearch))?'active':''}"><span class="icon">${uiIcon(i)}</span>${l}</button>`).join('');
+  $('.nav').innerHTML=nav.map(([v,i,l])=>`<button data-nav="${v}" class="${(v==='common'?commonResearch&&['library','ideas','reader'].includes(view):v===view&&!(commonResearch&&['library','ideas','reader'].includes(v)))?'active':''}"><span class="icon">${uiIcon(i)}</span>${l}</button>`).join('');
   $$('[data-nav]').forEach(b=>b.onclick=()=>{if(b.dataset.nav==='library'&&commonResearch){commonResearch=false;resetResearchFilters()}navigate(b.dataset.nav)});
-  $('.mobile-nav').innerHTML=[['books','▤','Livres'],['overview','▤','Projet'],['folders','▱','Dossiers'],['library','▦','Sources'],['book','▤','Écrire']].map(([v,i,l])=>`<button data-mobile-nav="${v}" class="${view===v?'active':''}">${uiIcon(i)}<small>${l}</small></button>`).join('');
+  $('.mobile-nav').innerHTML=[['books','▤','Livres'],['common','▦','Bibliothèque'],['library','▦','Sources'],['folders','▱','Dossiers'],['book','▤','Écrire']].map(([v,i,l])=>`<button data-mobile-nav="${v}" class="${(v==='common'?commonResearch:view===v&&!commonResearch)?'active':''}">${uiIcon(i)}<small>${l}</small></button>`).join('');
   $$('[data-mobile-nav]').forEach(b=>b.onclick=()=>{if(b.dataset.mobileNav==='library'&&commonResearch){commonResearch=false;resetResearchFilters()}navigate(b.dataset.mobileNav)});
   const crumb=$('.crumb');if(crumb)crumb.textContent=view==='books'?'Mes livres':commonResearch?'Bibliothèque commune':state.book.title+' / '+(nav.find(n=>n[0]===view)?.[2]||'Lecture');
-  if(view!=='books'&&view!=='settings'){
+  if(view!=='books'&&view!=='settings'&&!commonResearch){
     $('.main').insertAdjacentHTML('afterbegin',`<div class="research-context"><label>Livre <select id="researchBookSelect">${(state.books||[]).map(b=>`<option value="${esc(b.id)}" ${b.id===activeBookId?'selected':''}>${esc(b.title)}</option>`).join('')}</select></label><button id="researchAllBooks">Mes livres</button>${commonResearch?'<span class="small">Documents partagés entre tous les livres</span>':`<span class="small">${esc(state.book.description||'Sources, idées et dossiers de ce livre')}</span>`}</div>`);
     $('#researchBookSelect').onchange=e=>run(()=>openResearchBook(e.target.value));$('#researchAllBooks').onclick=()=>navigate('books');
   }
@@ -58,25 +60,96 @@ function renderResearchOverview(){
   $('#researchDetails').onclick=()=>{showModal(`<h2>Décrire le projet</h2><form id="researchDetailsForm"><label>Titre<input name="title" required maxlength="300" value="${esc(b.title)}"></label><label>Description<textarea name="description" maxlength="6000">${esc(b.description||'')}</textarea></label><label>État du livre<select name="project_status">${[['preparation','En préparation'],['writing','En écriture'],['done','Terminé']].map(([v,l])=>`<option value="${v}" ${b.project_status===v?'selected':''}>${l}</option>`).join('')}</select></label>${formActions('Enregistrer')}</form>`);$('#researchDetailsForm').onsubmit=e=>{e.preventDefault();run(async()=>{await persistDraft();await saveBook({...state.book,...Object.fromEntries(new FormData(e.target))});state.books=await api('books');$('#modal').close();render()},e.submitter)}};
 }
 function researchMatches(item,key){const r=researchOf();if(!r[key].includes(item.id))return false;if(researchFolder==='unfiled')return !r.folders.some(f=>f[key].includes(item.id));return !researchFolder||r.folders.find(f=>f.id===researchFolder)?.[key].includes(item.id)}
-filtered=function(){const list=researchOriginal.filtered();return commonResearch?list:list.filter(s=>researchMatches(s,'source_ids'))};
+filtered=function(){const list=researchOriginal.filtered();return commonResearch?list.filter(s=>matchesBookAssignment('source_ids',s.id)):list.filter(s=>researchMatches(s,'source_ids'))};
 function researchControls(key){return `<div class="row research-controls"><label>Dossier <select id="researchFolderFilter"><option value="">Tous les dossiers</option><option value="unfiled" ${researchFolder==='unfiled'?'selected':''}>À classer</option>${researchOf().folders.map(f=>`<option value="${esc(f.id)}" ${researchFolder===f.id?'selected':''}>${esc(f.name)}</option>`).join('')}</select></label><button id="pickResearch">Choisir dans la bibliothèque commune</button>${key==='source_ids'&&selected.size?'<button id="classifySelection">Classer la sélection</button>':''}</div>`}
 function bindResearchControls(key){$('#researchFolderFilter').onchange=e=>{researchFolder=e.target.value;page=1;render()};$('#pickResearch').onclick=()=>researchPicker(key);$('#classifySelection')?.addEventListener('click',()=>classifyResearch('source_ids',[...selected].filter(id=>researchOf().source_ids.includes(id))))}
-card=function(s){let html=researchOriginal.card(s);if(projectContext())html=html.replace('</article>',`<div class="research-item-tools"><span class="small">${researchOf().folders.filter(f=>f.source_ids.includes(s.id)).map(f=>esc(f.name)).join(' · ')||'À classer'}</span><button data-research-source="${esc(s.id)}">Classer / notes</button></div></article>`);else if(commonResearch)html=html.replace('</article>',`<div class="research-item-tools"><button data-link-source="${esc(s.id)}">${researchOf().source_ids.includes(s.id)?'Déjà dans ce livre · classer':'Ajouter à ce livre'}</button></div></article>`);return html};
+card=function(s){let html=researchOriginal.card(s);if(projectContext())html=html.replace('</article>',`<div class="research-item-tools"><span class="small">${researchOf().folders.filter(f=>f.source_ids.includes(s.id)).map(f=>esc(f.name)).join(' · ')||'À classer'}</span><button data-research-source="${esc(s.id)}">Classer / notes</button></div></article>`);else if(commonResearch){html=html.replace('</article>',`<div class="shared-card-books">${bookAssignmentBadges('source_ids',s.id)}</div><div class="research-item-tools"><button data-open="${esc(s.id)}">Ouvrir la source</button><button class="primary" data-link-source="${esc(s.id)}">Lier à des livres</button></div></article>`);if(!yt(s)&&!s.preview_id)html=html.replace('<div class="document-cover">Aa</div>',sourceThumbnail(s))}return html};
 renderLibrary=function(){
   if(!commonResearch)folder='';researchOriginal.renderLibrary();
   if(!commonResearch){$('.heading h1').textContent='Sources du livre';$('#folder')?.parentElement.querySelector('#folder')?.remove();$('#clearFolder')?.remove();$('#sync')?.remove();$('.stats').remove();$('.resultbar').before(document.createRange().createContextualFragment(researchControls('source_ids')));bindResearchControls('source_ids')}
   installResearchCollectionBar('library');
+  if(commonResearch){$('.heading h1').textContent='Bibliothèque commune';$('.heading .sub').textContent='Ouvrez vos documents, explorez leurs idées et répartissez-les entre vos livres.';$('.stats')?.remove();$('#sync')?.remove();$('.library-display')?.remove();$('.source-grid').classList.remove('library-list');$('.source-grid').classList.add('shared-source-grid','library-cards');installSharedLibraryTools('source_ids');collapseSharedSourceFilters()}
   if(!commonResearch&&scope==='archived'&&!filtered().length){
     const count=state.sources.filter(s=>s.annotation.archived).length;
     $('.source-grid').after(document.createRange().createContextualFragment(`<div class="notice">Ce livre n’a aucune archive correspondant aux filtres. La bibliothèque commune contient ${count} source(s) archivée(s). <button id="showCommonArchives">Voir toutes les archives</button></div>`));
     $('#showCommonArchives').onclick=()=>openResearchCollection('library',true,true);
   }
   $$('[data-research-source]').forEach(b=>b.onclick=()=>classifyResearch('source_ids',[b.dataset.researchSource]));
-  $$('[data-link-source]').forEach(b=>b.onclick=()=>classifyResearch('source_ids',[b.dataset.linkSource]));
+  $$('[data-link-source]').forEach(b=>b.onclick=()=>run(()=>linkResearchBooks('source_ids',[b.dataset.linkSource])));
 };
 function bookIdeaPool(){
   const r=researchOf(),sources=new Set(r.source_ids),retained=new Set(r.idea_ids);
   return state.ideas.filter(i=>retained.has(i.id)||(i.refs||[]).some(ref=>sources.has(ref.source_id)));
+}
+function linkedResearchBooks(key,id){return (state.books||[]).filter(b=>(b.id===activeBookId?researchOf():b.research)?.[key]?.includes(id))}
+function matchesBookAssignment(key,id){const books=linkedResearchBooks(key,id);return !commonAssignmentFilter||(commonAssignmentFilter==='unlinked'?!books.length:books.some(b=>b.id===commonAssignmentFilter))}
+function bookAssignmentBadges(key,id){
+  const books=linkedResearchBooks(key,id);
+  return books.length?`<span class="small">Lié à ${books.length} livre${books.length>1?'s':''}</span><div class="linked-book-badges">${books.map(b=>`<span>${b.cover?`<img src="${assetUrl(b.cover)}" alt="">`:uiIcon('▤')}${esc(b.title)}</span>`).join('')}</div>`:'<span class="small">À répartir · aucun livre lié</span>';
+}
+function sourceThumbnail(s){
+  if(!s)return `<span class="source-thumbnail document-thumbnail">${uiIcon('✧')}<small>Idée personnelle</small></span>`;
+  if(yt(s))return `<img class="source-thumbnail" src="https://i.ytimg.com/vi/${encodeURIComponent(yt(s))}/hqdefault.jpg" alt="" loading="lazy" referrerpolicy="no-referrer">`;
+  if(s.preview_id)return `<img class="source-thumbnail" src="${assetUrl(s.preview_id)}" alt="" loading="lazy">`;
+  if(s.kind==='PDF'&&s.asset_id)return `<img class="source-thumbnail" src="/api/pdf-page?id=${encodeURIComponent(s.asset_id)}&page=1" alt="" loading="lazy">`;
+  return `<span class="source-thumbnail document-thumbnail"><small>${esc(s.kind||'Document')}</small>${uiIcon('▤')}<strong>${esc(s.title)}</strong><small>${esc(s.author||'')}</small></span>`;
+}
+function installSharedLibraryTools(key){
+  const ids=key==='source_ids'?selected:sharedIdeaSelection;
+  const count=ids.size;
+  $('.research-collection').insertAdjacentHTML('beforeend',`<div class="shared-library-toolbar"><label>Livres liés<select id="sharedBookFilter"><option value="">Tous les éléments</option><option value="unlinked" ${commonAssignmentFilter==='unlinked'?'selected':''}>À répartir · aucun livre</option>${(state.books||[]).map(b=>`<option value="${esc(b.id)}" ${commonAssignmentFilter===b.id?'selected':''}>${esc(b.title)}</option>`).join('')}</select></label>${count?`<div class="shared-selection-actions"><span>${count} sélectionné(s)</span><button id="linkSharedSelection" class="primary">Lier la sélection à des livres</button><button id="clearSharedSelection">Annuler la sélection</button></div>`:''}</div>`);
+  $('#sharedBookFilter').onchange=e=>{commonAssignmentFilter=e.target.value;page=1;ideaVisibleLimit=60;render()};
+  $('#linkSharedSelection')?.addEventListener('click',()=>run(()=>linkResearchBooks(key,[...ids])));
+  $('#clearSharedSelection')?.addEventListener('click',()=>{ids.clear();render()});
+}
+function collapseSharedSourceFilters(){
+  const filters=$('.filters');if(!filters)return;
+  const search=filters.querySelector('.search');if(search)filters.before(search);
+  const details=document.createElement('details');details.className='shared-filter-details';details.innerHTML='<summary>Affiner : auteur, format, statut et dossier</summary>';
+  filters.before(details);details.append(filters);
+  const folderRow=$('#folder')?.closest('.row');if(folderRow)details.append(folderRow);
+}
+ideaCard=function(i){
+  if(!commonResearch)return researchOriginal.ideaCard(i);
+  const s=(i.refs||[]).map(r=>source(r.source_id)).find(Boolean);
+  return `<article class="idea-card shared-idea-card"><button class="shared-idea-preview" data-open-shared-idea="${esc(i.id)}" aria-label="Ouvrir l’idée ${esc(i.title)}">${sourceThumbnail(s)}<span class="preview-label">Idée · ${esc(s?.author||'Note personnelle')}</span></button><div class="shared-idea-content"><div class="row"><label class="shared-idea-check"><input type="checkbox" data-select-shared-idea="${esc(i.id)}" ${sharedIdeaSelection.has(i.id)?'checked':''} aria-label="Sélectionner ${esc(i.title)}">Sélectionner</label><button data-idea-archive="${esc(i.id)}" aria-label="${i.archived?'Restaurer':'Archiver'} cette idée">${i.archived?'Restaurer':'Archiver'}</button><button class="heart ${i.liked?'liked':''}" data-idea-like="${esc(i.id)}" aria-label="Aimer cette idée">${uiIcon('♡')}</button></div><h3><button data-open-shared-idea="${esc(i.id)}">${esc(i.title)}</button></h3><p class="shared-idea-excerpt">${esc(i.notes||'Ouvrez cette idée pour retrouver son contexte et ses passages sources.')}</p><div class="tags">${(i.tags||[]).slice(0,4).map(t=>`<button class="tag" data-idea-tag="${esc(t)}">${esc(t)}</button>`).join('')}</div>${bookAssignmentBadges('idea_ids',i.id)}<div class="research-item-tools"><button data-open-shared-idea="${esc(i.id)}">Ouvrir l’idée</button><button class="primary" data-link-idea="${esc(i.id)}">Lier à des livres</button></div></div></article>`;
+};
+function bindSharedIdeas(){
+  $$('[data-open-shared-idea]').forEach(b=>b.onclick=()=>run(()=>openSharedIdea(b.dataset.openSharedIdea)));
+  $$('[data-link-idea]').forEach(b=>b.onclick=()=>run(()=>linkResearchBooks('idea_ids',[b.dataset.linkIdea])));
+  $$('[data-select-shared-idea]').forEach(b=>b.onchange=()=>{b.checked?sharedIdeaSelection.add(b.dataset.selectSharedIdea):sharedIdeaSelection.delete(b.dataset.selectSharedIdea);renderIdeas()});
+}
+async function openSharedIdea(id){
+  const i=await api('idea?id='+encodeURIComponent(id));
+  showModal(`<div class="eyebrow">Idée de la bibliothèque</div><h2>${esc(i.title)}</h2><p class="small">${esc(i.nature||'Idée')} · ${esc(i.status||'À vérifier')}</p><div class="idea-detail-notes">${esc(i.notes||'Aucune note ajoutée.')}</div><div>${bookAssignmentBadges('idea_ids',id)}</div><h3>Passages sources</h3><div class="idea-detail-refs">${(i.refs||[]).map((r,n)=>`<article><button data-idea-detail-source="${n}">${sourceThumbnail(source(r.source_id))}<span><strong>${esc(source(r.source_id)?.title||'Source')}</strong><small>${r.page?'Page '+esc(r.page):r.section?esc(r.section):time(r.start)+'–'+time(r.end)}</small></span></button>${r.quote?`<blockquote>${esc(r.quote)}</blockquote>`:''}</article>`).join('')||'<p>Cette idée ne contient pas de référence source.</p>'}</div><div class="modal-actions"><button data-close>Fermer</button><button id="editSharedIdea">Modifier l’idée</button><button id="detailLinkBooks" class="primary">Lier à des livres</button></div>`);
+  $$('[data-idea-detail-source]').forEach(b=>b.onclick=()=>{$('#modal').close();const r=i.refs[Number(b.dataset.ideaDetailSource)];openSource(r.source_id,r.start)});
+  $('#editSharedIdea').onclick=()=>ideaModal(i);
+  $('#detailLinkBooks').onclick=()=>run(()=>linkResearchBooks('idea_ids',[id]));
+}
+async function linkResearchBooks(key,ids){
+  if(!ids.length)return;
+  if(ids.length>200){toast('Sélectionnez au maximum 200 éléments à la fois.');return}
+  await persistDraft();if(bookDirty)return;
+  const books=await api('books');
+  // Read fresh revisions and memberships without switching the current project.
+  const full=await Promise.all(books.map(b=>baseApi('book?book_id='+encodeURIComponent(b.id))));
+  const originals=new Map(full.map(b=>[b._book_id,new Set(b.research?.[key]||[])])),touched=new Set();
+  const first=key==='source_ids'?source(ids[0]):state.ideas.find(i=>i.id===ids[0]);
+  showModal(`<div class="eyebrow">Répartir votre bibliothèque</div><h2>Lier à des livres</h2><p>${ids.length===1?esc(first?.title||'Élément sélectionné'):ids.length+' éléments sélectionnés'}</p><p class="small">Cochez un ou plusieurs livres. Chaque livre garde ses dossiers et ses notes. Décocher retire le lien et son classement dans ce livre ; l’original reste dans la bibliothèque.</p><form id="linkBooksForm"><div class="link-books-grid">${books.map(b=>{const n=ids.filter(id=>originals.get(b.id).has(id)).length;return `<label class="link-book-choice"><input type="checkbox" name="book_ids" value="${esc(b.id)}" ${n===ids.length?'checked':''} data-partial="${n>0&&n<ids.length}"><span class="link-book-cover">${b.cover?`<img src="${assetUrl(b.cover)}" alt="">`:uiIcon('▤')}</span><span><strong>${esc(b.title)}</strong><small>${n===ids.length?'Déjà lié':n?n+' sur '+ids.length+' déjà liés':'Aucun lien avec cette sélection'}</small></span></label>`}).join('')}</div><p id="linkBooksStatus" role="status"></p>${formActions('Enregistrer les liens')}</form>`);
+  $$('[name=book_ids]').forEach(input=>{input.indeterminate=input.dataset.partial==='true';input.onchange=()=>{input.indeterminate=false;touched.add(input.value);input.closest('label').classList.toggle('chosen',input.checked)}});
+  $('#linkBooksForm').onsubmit=e=>{e.preventDefault();run(async()=>{
+    const choices=new Set(new FormData(e.target).getAll('book_ids'));let saved=0;
+    try{
+      for(const b of books){
+        if(!touched.has(b.id))continue;
+        const fresh=await baseApi('book?book_id='+encodeURIComponent(b.id)),members=new Set(fresh.research?.[key]||[]),adding=choices.has(b.id);
+        const changes=ids.filter(id=>adding?!members.has(id):members.has(id));
+        if(changes.length)await baseApi('book-research',{book_id:b.id,revision:fresh._revision,action:adding?'add':'remove',[key]:changes});
+        saved++;$('#linkBooksStatus').textContent=saved+' livre(s) enregistré(s)…';
+      }
+    }catch(error){$('#linkBooksStatus').textContent='Les liens déjà enregistrés sont conservés. '+error.message;throw error}
+    await reload();bookDraft=null;$('#modal').close();selected.clear();sharedIdeaSelection.clear();render();toast('Liens aux livres enregistrés.');
+  },e.submitter)};
 }
 function ideaInResearchFolder(i,f){return f.idea_ids.includes(i.id)||(i.refs||[]).some(ref=>f.source_ids.includes(ref.source_id))}
 function bookIdeaMatches(i){
@@ -92,6 +165,7 @@ function openResearchCollection(v,common,archived=false){
 }
 function researchCollectionBar(v){
   const count=commonResearch?(v==='library'?state.sources.length:state.ideas.length):(v==='library'?state.sources.filter(s=>researchOf().source_ids.includes(s.id)).length:bookIdeaPool().length);
+  if(commonResearch){const hasFilters=commonAssignmentFilter||(v==='library'?(query||author||status||kind||folder||tagsSel.length||scope!=='all'):(ideaQuery||ideaFolder||ideaTags.length||ideaMode!=='all'));return `<section class="research-collection common-collection" aria-label="Bibliothèque commune"><div class="row"><button data-common-section="library" aria-pressed="${v==='library'}">Sources</button><button data-common-section="ideas" aria-pressed="${v==='ideas'}">Idées</button><button data-research-collection="book">Ce livre</button><button id="resetCollectionFilters" ${hasFilters?'':'hidden'}>Effacer les filtres</button></div></section>`}
   return `<section class="research-collection" aria-label="Périmètre de la bibliothèque"><div class="row"><strong>Afficher</strong><button data-research-collection="book" aria-pressed="${!commonResearch}">Ce livre</button><button data-research-collection="common" aria-pressed="${commonResearch}">Bibliothèque commune</button><button id="resetCollectionFilters">Effacer les filtres</button></div><p class="small">${commonResearch?'Tous les livres · bibliothèque complète':`Livre « ${esc(state.book.title)} »`} · ${count} ${v==='library'?'sources':'idées disponibles'}</p>${commonResearch?`<div class="row"><button data-common-section="library" aria-pressed="${v==='library'}">Sources</button><button data-common-section="ideas" aria-pressed="${v==='ideas'}">Idées</button></div>`:''}</section>`;
 }
 function installResearchCollectionBar(v){
@@ -107,7 +181,12 @@ addArchiveTab=function(){
   const b=$('[data-scope="archived"]');b.innerHTML=b.innerHTML.replace(/Archives \(\d+\)/,'Archives ('+pool.filter(s=>s.annotation.archived).length+')');
 };
 renderIdeas=function(){
-  if(commonResearch){researchOriginal.renderIdeas();$('.heading h1').textContent='Idées de la bibliothèque commune';installResearchCollectionBar('ideas');return}
+  if(commonResearch){
+    const all=state.ideas;state.ideas=all.filter(i=>matchesBookAssignment('idea_ids',i.id));
+    try{researchOriginal.renderIdeas()}finally{state.ideas=all}
+    $('.heading h1').textContent='Idées de la bibliothèque commune';installResearchCollectionBar('ideas');
+    $('.idea-list')?.classList.add('shared-idea-grid');installSharedLibraryTools('idea_ids');bindSharedIdeas();return;
+  }
   const r=researchOf(),retained=new Set(r.idea_ids),pool=bookIdeaPool();
   const archiveCount=pool.filter(i=>i.archived).length;
   const active=pool.filter(i=>!i.archived);
@@ -149,6 +228,9 @@ function classifyResearch(key,ids){
 // Associate explicit imports with the current book, including previously imported videos.
 api=async function(path,data){
   const bid=activeBookId,attach=projectContext()&&data!==undefined&&['youtube','import','idea'].includes(path),result=await researchOriginal.api(path,data);
+  // Older running servers can serve the new interface before their next restart.
+  const books=data===undefined?(path==='books'?result:/^library(\?|$)/.test(path)?result.books:null):null;
+  if(books?.some(b=>!b.research))await Promise.all(books.filter(b=>!b.research).map(async b=>{const full=await baseApi('book?book_id='+encodeURIComponent(b.id));b.research=full.research||{source_ids:[],idea_ids:[]}}));
   if(attach&&bid===activeBookId){const item=result.source||result;if(item.id)await changeResearch({action:'add',[path==='idea'?'idea_ids':'source_ids']:[item.id]})}
   return result;
 };
@@ -156,6 +238,8 @@ uploadFile=async function(file,meta={},asSource=true,onProgress=()=>{}){const bi
 
 renderReader=function(){
   researchOriginal.renderReader();
+  $('.reader-head').insertAdjacentHTML('beforeend',`<div class="reader-book-links"><div>${bookAssignmentBadges('source_ids',current.id)}</div><button id="readerLinkBooks" class="primary">Lier à des livres</button></div>`);
+  $('#readerLinkBooks').onclick=()=>run(()=>linkResearchBooks('source_ids',[current.id]));
   if(!commonResearch&&$('#readFolder')){
     const button=document.createElement('button');button.textContent='Dossiers de ce livre';button.onclick=()=>classifyResearch('source_ids',[current.id]);$('#readFolder').hidden=true;$('#readFolder').after(button);
     $('#notes').value=researchOf().source_notes?.[current.id]||'';

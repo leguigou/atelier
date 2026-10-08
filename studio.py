@@ -88,7 +88,7 @@ class Studio:
         result=[]
         for row in rows:
             b=json.loads(row['payload']);r=b.get('research',{})
-            result.append(dict(id=row['id'],title=b['title'],author=b.get('author',''),description=b.get('description',''),cover=b.get('covers',{}).get('front',''),project_status=b.get('project_status','writing' if b['chapters'] else 'preparation'),chapters=len(b['chapters']),sources=len(r.get('source_ids',[])),ideas=len(r.get('idea_ids',[])),folders=len(r.get('folders',[])),updated=row['updated']))
+            result.append(dict(id=row['id'],title=b['title'],author=b.get('author',''),description=b.get('description',''),cover=b.get('covers',{}).get('front',''),project_status=b.get('project_status','writing' if b['chapters'] else 'preparation'),chapters=len(b['chapters']),sources=len(r.get('source_ids',[])),ideas=len(r.get('idea_ids',[])),folders=len(r.get('folders',[])),research={key:r.get(key,[]) for key in ('source_ids','idea_ids')},updated=row['updated']))
         return result
     def create_book(self,data):
         title=self.a.required(data,'title',300);bid=self.a.uid();b=self.normalize(dict(title=title,author=str(data.get('author',''))[:300],chapters=[],_book_id=bid,_revision=self.a.uid()))

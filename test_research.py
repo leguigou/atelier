@@ -20,6 +20,20 @@ class ResearchTests(unittest.TestCase):
         i=app.save_idea(dict(title='Une idée',refs=[dict(source_id=s['id'],start=0,end=0)]))
         return s,i
 
+    def test_visual_library_keeps_previews_and_book_memberships(self):
+        s=self.s.upload(fixtures.StudioTests.image(self),'photo.png','Photo commune')
+        i=app.save_idea(dict(title='Idée illustrée',refs=[dict(source_id=s['id'],start=0,end=0)]))
+        a=self.s.create_book({'title':'Livre A'});b=self.s.create_book({'title':'Livre B'})
+        for book in (a,b):self.change(book,action='add',source_ids=[s['id']],idea_ids=[i['id']])
+        data=app.compact_library()
+        source=next(x for x in data['sources'] if x['id']==s['id'])
+        self.assertEqual(source['preview_id'],s['preview_id'])
+        self.assertEqual(source['asset_id'],s['asset_id'])
+        for book in data['books']:
+            if book['id'] in (a['_book_id'],b['_book_id']):
+                self.assertEqual(book['research']['source_ids'],[s['id']])
+                self.assertEqual(book['research']['idea_ids'],[i['id']])
+
     def test_shared_material_multiple_folders_notes_and_removal_are_isolated(self):
         s,i=self.sample();a=self.s.create_book({'title':'Livre A'});b=self.s.create_book({'title':'Livre B'})
         for name in ('Peur','Relations'):a=self.change(a,action='folder-create',name=name)

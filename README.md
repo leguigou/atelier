@@ -177,6 +177,8 @@ Les sources et idées restent communes, mais chaque livre conserve ses appartena
 
 Dans **Sources** et **Idées**, **Afficher : Ce livre / Bibliothèque commune** indique le périmètre consulté. Le nombre d’archives correspond à ce périmètre ; **Voir toutes les archives** ouvre le fonds commun lorsqu’un livre n’en contient aucune. **Effacer les filtres** retrouve les éléments masqués par une recherche ou un classement. Les idées extraites des sources du livre sont disponibles automatiquement, avec un affichage par groupes de 60 ; **Retenir pour ce livre** les ajoute à la sélection personnelle, consultable dans **Retenues**. Les filtres d’idées peuvent aussi retrouver celles issues des sources d’un dossier.
 
+La **Bibliothèque commune** présente les sources et les idées en cartes avec miniatures et livres liés. **Ouvrir la source** donne accès à son lecteur ; **Ouvrir l’idée** affiche ses notes et les passages sources. **Lier à des livres** permet de cocher plusieurs ouvrages avec leurs couvertures. Pour répartir plusieurs éléments ensemble, cocher leurs cartes puis utiliser **Lier la sélection à des livres**. Une case partiellement cochée indique que seuls certains éléments sont déjà liés : ce livre reste inchangé tant que sa case n’est pas modifiée. Décocher retire les liens, dossiers et notes propres au livre concerné, tout en conservant les originaux et les autres livres. Le filtre **Livres liés** retrouve les éléments d’un ouvrage ou ceux **À répartir · aucun livre**. Sur téléphone, l’entrée **Bibliothèque** donne directement accès à cette vue.
+
 L’ancien fonds et ses dossiers sont repris dans le livre principal au premier démarrage de cette version. Les autres projets reprennent leurs sources éditoriales et leurs idées de chapitres. Les classements font partie du livre, de ses versions et de la sauvegarde complète. La sélection de 60 sources dans le manuscrit sert aux préparations IA ; la matière du livre peut contenir davantage de documents.
 
 ### Organiser par API
@@ -200,3 +202,5 @@ Les modes `add`, `remove` et `replace` ajoutent, retirent ou remplacent les appa
 Les listes `/api/v1/sources` et `/api/v1/ideas` acceptent `book_id`, `folder_id`, `unfiled=true`, `sort=title|recent|added|duration` et `order=asc|desc`, avec les filtres et la pagination existants. Exemple : `/api/v1/sources?book_id=…&kind=Vidéo&sort=title&order=asc`. `/api/v1/folders?book_id=…` retourne les dossiers du livre triés par nom. Sans `book_id`, l’ancienne API des dossiers communs reste disponible. La documentation `/api` et le schéma `/api/openapi.json` décrivent ces commandes.
 
 Vérification du parcours complet sur ordinateur et téléphone : `node tests/research-books.cjs` avec Playwright installé.
+
+Vérification de la bibliothèque visuelle et des associations à plusieurs livres : `node tests/shared-library.cjs` (miniatures, lecteur, détails des idées, associations en lot et liens partiels).

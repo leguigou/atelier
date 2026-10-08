@@ -363,7 +363,7 @@ def library(book_id=None):
 
 def compact_library(book_id=None):
     data=library(book_id)
-    source_fields=('id','title','author','url','date','duration','kind','status','automatic','language','views','youtube_id','added_at','segment_count')
+    source_fields=('id','title','author','url','date','duration','kind','status','automatic','language','views','youtube_id','added_at','segment_count','asset_id','preview_id','page_count','filename')
     annotation_fields=('liked','archived','tags','state','folder')
     data['sources']=[{**{k:s[k] for k in source_fields if k in s},'annotation':{k:s['annotation'][k] for k in annotation_fields if k in s['annotation']}} for s in data['sources']]
     data['ideas']=[{**idea,'refs':[{k:v for k,v in ref.items() if k!='quote'} for ref in idea.get('refs',[])]} for idea in data['ideas']]

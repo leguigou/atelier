@@ -55,7 +55,7 @@ const assert=require('node:assert/strict');
       assert.match(await page.locator('[data-scope="archived"]').innerText(),/Archives \(0\)/);
       await page.locator('[data-scope="archived"]').click();await page.locator('#showCommonArchives').click();
       await page.locator('.card-title[data-open="'+sid+'"]').waitFor();
-      await page.locator('#researchBookSelect').selectOption(bid);await page.locator('#overviewSources').click();
+      await nav('books');await page.locator('[data-open-book="'+bid+'"]').first().click();await page.locator('#overviewSources').click();
       assert.match(await page.locator('[data-scope="archived"]').innerText(),/Archives \(1\)/);
       await page.locator('[data-scope="archived"]').click();await page.locator('[data-archive="'+sid+'"]').click();
       await page.locator('[data-scope="archived"]').filter({hasText:'Archives (0)'}).waitFor();
