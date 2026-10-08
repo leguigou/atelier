@@ -175,6 +175,8 @@ L’accueil **Mes livres** présente les projets avec leur couverture, leur desc
 
 Les sources et idées restent communes, mais chaque livre conserve ses appartenances, ses dossiers et ses notes de travail. **Choisir dans la bibliothèque commune** ajoute les éléments au livre ; **Classer / notes** permet de choisir plusieurs dossiers. **À classer** retrouve les éléments sans dossier. Retirer un élément du livre conserve l’original, les autres projets et les références déjà présentes dans le manuscrit. Supprimer un dossier conserve son contenu dans le livre. Les imports réalisés depuis un projet sont rattachés à ce projet.
 
+Dans **Sources** et **Idées**, **Afficher : Ce livre / Bibliothèque commune** indique le périmètre consulté. Le nombre d’archives correspond à ce périmètre ; **Voir toutes les archives** ouvre le fonds commun lorsqu’un livre n’en contient aucune. **Effacer les filtres** retrouve les éléments masqués par une recherche ou un classement. Les idées extraites des sources du livre sont disponibles automatiquement, avec un affichage par groupes de 60 ; **Retenir pour ce livre** les ajoute à la sélection personnelle, consultable dans **Retenues**. Les filtres d’idées peuvent aussi retrouver celles issues des sources d’un dossier.
+
 L’ancien fonds et ses dossiers sont repris dans le livre principal au premier démarrage de cette version. Les autres projets reprennent leurs sources éditoriales et leurs idées de chapitres. Les classements font partie du livre, de ses versions et de la sauvegarde complète. La sélection de 60 sources dans le manuscrit sert aux préparations IA ; la matière du livre peut contenir davantage de documents.
 
 ### Organiser par API

@@ -3,7 +3,7 @@ let commonResearch=false, researchFolder='', researchIdeaSort='recent';
 view='books';
 const researchOf=()=>state.book.research||{source_ids:state.book.source_ids||[],idea_ids:[],folders:[],source_notes:{},idea_notes:{}};
 const projectContext=()=>!commonResearch&&!['books','settings'].includes(view);
-const researchOriginal={shell,render,navigate,filtered,renderLibrary,renderIdeas,renderFolders,renderReader,ideaModal,card,api,uploadFile};
+const researchOriginal={shell,render,navigate,filtered,renderLibrary,renderIdeas,renderFolders,renderReader,ideaModal,card,api,uploadFile,addArchiveTab};
 
 async function changeResearch(data){
   await persistDraft();
@@ -16,7 +16,7 @@ async function openResearchBook(id){
   rememberBook(id);bookDraft=null;chapterId=null;commonResearch=false;researchFolder='';resetResearchFilters();
   await reload();view='overview';render();
 }
-function resetResearchFilters(){query='';author='';status='';kind='';folder='';scope='all';tagsSel=[];page=1;selected.clear();sourceSearchIds=null;sourceSearchPassages=null}
+function resetResearchFilters(){query='';author='';status='';kind='';folder='';scope='all';tagsSel=[];page=1;selected.clear();sourceSearchIds=null;sourceSearchPassages=null;clearTimeout(sourceSearchTimer);ideaQuery='';ideaMode='all';ideaFolder='';ideaTags=[];ideaVisibleLimit=60}
 navigate=function(v){
   if(v==='common'){commonResearch=true;researchFolder='';resetResearchFilters();v='library'}
   else if(['overview','ideas','folders','book'].includes(v)&&commonResearch){commonResearch=false;researchFolder='';resetResearchFilters()}
@@ -43,7 +43,7 @@ shell=function(content){
   }
 };
 function renderBooks(){
-  shell(header('Votre bibliothèque personnelle','Mes livres','Choisissez un livre pour retrouver sa matière et son manuscrit.','<button id="createResearchBook" class="primary">Créer un livre</button>')+`<div class="books-grid">${(state.books||[]).map(b=>`<article class="project-book"><button data-open-book="${esc(b.id)}" class="project-book-cover" aria-label="Ouvrir ${esc(b.title)}">${b.cover?`<img src="${assetUrl(b.cover)}" alt="">`:`<span>${uiIcon('▤')}</span>`}</button><div><h2>${esc(b.title)}</h2><p>${esc(b.description||b.author||'Un projet à faire grandir')}</p><span class="small">${({preparation:'En préparation',writing:'En écriture',done:'Terminé'})[b.project_status]||'En préparation'} · ${b.chapters} chapitres · ${b.sources||0} sources · ${b.ideas||0} idées</span><p><button data-open-book="${esc(b.id)}" class="primary">Ouvrir le livre</button></p></div></article>`).join('')}</div>`);
+  shell(header('Votre bibliothèque personnelle','Mes livres','Choisissez un livre pour retrouver sa matière et son manuscrit.','<button id="createResearchBook" class="primary">Créer un livre</button>')+`<div class="books-grid">${(state.books||[]).map(b=>`<article class="project-book"><button data-open-book="${esc(b.id)}" class="project-book-cover" aria-label="Ouvrir ${esc(b.title)}">${b.cover?`<img src="${assetUrl(b.cover)}" alt="">`:`<span>${uiIcon('▤')}</span>`}</button><div><h2>${esc(b.title)}</h2><p>${esc(b.description||b.author||'Un projet à faire grandir')}</p><span class="small">${({preparation:'En préparation',writing:'En écriture',done:'Terminé'})[b.project_status]||'En préparation'} · ${b.chapters} chapitres · ${b.sources||0} sources · ${b.ideas||0} idées retenues</span><p><button data-open-book="${esc(b.id)}" class="primary">Ouvrir le livre</button></p></div></article>`).join('')}</div>`);
   $('#createResearchBook').onclick=newBookModal;$$('[data-open-book]').forEach(b=>b.onclick=()=>run(()=>openResearchBook(b.dataset.openBook),b));
 }
 newBookModal=function(){
@@ -52,7 +52,7 @@ newBookModal=function(){
 };
 function renderResearchOverview(){
   const r=researchOf(),b=state.book;
-  shell(header('Votre projet',esc(b.title),esc(b.description)||'Organisez la matière de ce livre, puis avancez dans le manuscrit.','<button id="researchDetails">Décrire le projet</button>')+bookPresentationCard(b)+`<div class="stats"><div class="stat"><strong>${r.source_ids.length}</strong><span>sources du livre</span></div><div class="stat"><strong>${r.idea_ids.length}</strong><span>idées retenues</span></div><div class="stat"><strong>${r.folders.length}</strong><span>dossiers</span></div><div class="stat"><strong>${b.chapters.length}</strong><span>chapitres</span></div></div><div class="research-start"><section class="panel"><h2>Rassembler la matière</h2><p>Ajoutez vos documents, retrouvez des idées et classez-les dans un ou plusieurs dossiers.</p><div class="row"><button id="overviewSources">Sources</button><button id="overviewIdeas">Idées</button><button id="overviewFolders">Dossiers</button></div></section><section class="panel"><h2>Faire avancer le livre</h2><p>${esc(b.brief?.intention||'Définissez votre intention, construisez un plan et commencez à écrire.')}</p><button id="overviewWrite" class="primary">Ouvrir le manuscrit</button></section></div><section class="panel"><h2>Bibliothèque commune</h2><p>Réutilisez une source ou une idée dans plusieurs livres. Chaque projet conserve son propre classement et ses notes de travail.</p><button id="overviewCommon">Explorer les sources communes</button></section>`);
+  shell(header('Votre projet',esc(b.title),esc(b.description)||'Organisez la matière de ce livre, puis avancez dans le manuscrit.','<button id="researchDetails">Décrire le projet</button>')+bookPresentationCard(b)+`<div class="stats"><div class="stat"><strong>${r.source_ids.length}</strong><span>sources du livre</span></div><div class="stat"><strong>${bookIdeaPool().length}</strong><span>idées disponibles</span></div><div class="stat"><strong>${r.folders.length}</strong><span>dossiers</span></div><div class="stat"><strong>${b.chapters.length}</strong><span>chapitres</span></div></div><div class="research-start"><section class="panel"><h2>Rassembler la matière</h2><p>Ajoutez vos documents, retrouvez des idées et classez-les dans un ou plusieurs dossiers.</p><div class="row"><button id="overviewSources">Sources</button><button id="overviewIdeas">Idées</button><button id="overviewFolders">Dossiers</button></div></section><section class="panel"><h2>Faire avancer le livre</h2><p>${esc(b.brief?.intention||'Définissez votre intention, construisez un plan et commencez à écrire.')}</p><button id="overviewWrite" class="primary">Ouvrir le manuscrit</button></section></div><section class="panel"><h2>Bibliothèque commune</h2><p>Réutilisez une source ou une idée dans plusieurs livres. Chaque projet conserve son propre classement et ses notes de travail.</p><button id="overviewCommon">Explorer les sources communes</button></section>`);
   bindBookPresentation();
   for(const [id,v] of [['overviewSources','library'],['overviewIdeas','ideas'],['overviewFolders','folders'],['overviewWrite','book'],['overviewCommon','common']])$('#'+id).onclick=()=>navigate(v);
   $('#researchDetails').onclick=()=>{showModal(`<h2>Décrire le projet</h2><form id="researchDetailsForm"><label>Titre<input name="title" required maxlength="300" value="${esc(b.title)}"></label><label>Description<textarea name="description" maxlength="6000">${esc(b.description||'')}</textarea></label><label>État du livre<select name="project_status">${[['preparation','En préparation'],['writing','En écriture'],['done','Terminé']].map(([v,l])=>`<option value="${v}" ${b.project_status===v?'selected':''}>${l}</option>`).join('')}</select></label>${formActions('Enregistrer')}</form>`);$('#researchDetailsForm').onsubmit=e=>{e.preventDefault();run(async()=>{await persistDraft();await saveBook({...state.book,...Object.fromEntries(new FormData(e.target))});state.books=await api('books');$('#modal').close();render()},e.submitter)}};
@@ -65,17 +65,63 @@ card=function(s){let html=researchOriginal.card(s);if(projectContext())html=html
 renderLibrary=function(){
   if(!commonResearch)folder='';researchOriginal.renderLibrary();
   if(!commonResearch){$('.heading h1').textContent='Sources du livre';$('#folder')?.parentElement.querySelector('#folder')?.remove();$('#clearFolder')?.remove();$('#sync')?.remove();$('.stats').remove();$('.resultbar').before(document.createRange().createContextualFragment(researchControls('source_ids')));bindResearchControls('source_ids')}
+  installResearchCollectionBar('library');
+  if(!commonResearch&&scope==='archived'&&!filtered().length){
+    const count=state.sources.filter(s=>s.annotation.archived).length;
+    $('.source-grid').after(document.createRange().createContextualFragment(`<div class="notice">Ce livre n’a aucune archive correspondant aux filtres. La bibliothèque commune contient ${count} source(s) archivée(s). <button id="showCommonArchives">Voir toutes les archives</button></div>`));
+    $('#showCommonArchives').onclick=()=>openResearchCollection('library',true,true);
+  }
   $$('[data-research-source]').forEach(b=>b.onclick=()=>classifyResearch('source_ids',[b.dataset.researchSource]));
   $$('[data-link-source]').forEach(b=>b.onclick=()=>classifyResearch('source_ids',[b.dataset.linkSource]));
 };
+function bookIdeaPool(){
+  const r=researchOf(),sources=new Set(r.source_ids),retained=new Set(r.idea_ids);
+  return state.ideas.filter(i=>retained.has(i.id)||(i.refs||[]).some(ref=>sources.has(ref.source_id)));
+}
+function ideaInResearchFolder(i,f){return f.idea_ids.includes(i.id)||(i.refs||[]).some(ref=>f.source_ids.includes(ref.source_id))}
+function bookIdeaMatches(i){
+  if(!researchFolder)return true;
+  const folders=researchOf().folders;
+  if(researchFolder==='unfiled')return !folders.some(f=>ideaInResearchFolder(i,f));
+  const f=folders.find(f=>f.id===researchFolder);return Boolean(f&&ideaInResearchFolder(i,f));
+}
+function openResearchCollection(v,common,archived=false){
+  commonResearch=common;researchFolder='';resetResearchFilters();
+  if(archived){if(v==='library')scope='archived';else ideaMode='archived'}
+  researchOriginal.navigate(v);
+}
+function researchCollectionBar(v){
+  const count=commonResearch?(v==='library'?state.sources.length:state.ideas.length):(v==='library'?state.sources.filter(s=>researchOf().source_ids.includes(s.id)).length:bookIdeaPool().length);
+  return `<section class="research-collection" aria-label="Périmètre de la bibliothèque"><div class="row"><strong>Afficher</strong><button data-research-collection="book" aria-pressed="${!commonResearch}">Ce livre</button><button data-research-collection="common" aria-pressed="${commonResearch}">Bibliothèque commune</button><button id="resetCollectionFilters">Effacer les filtres</button></div><p class="small">${commonResearch?'Tous les livres · bibliothèque complète':`Livre « ${esc(state.book.title)} »`} · ${count} ${v==='library'?'sources':'idées disponibles'}</p>${commonResearch?`<div class="row"><button data-common-section="library" aria-pressed="${v==='library'}">Sources</button><button data-common-section="ideas" aria-pressed="${v==='ideas'}">Idées</button></div>`:''}</section>`;
+}
+function installResearchCollectionBar(v){
+  $('.heading').after(document.createRange().createContextualFragment(researchCollectionBar(v)));
+  $$('[data-research-collection]').forEach(b=>b.onclick=()=>openResearchCollection(v,b.dataset.researchCollection==='common'));
+  $$('[data-common-section]').forEach(b=>b.onclick=()=>openResearchCollection(b.dataset.commonSection,true));
+  $('#resetCollectionFilters').onclick=()=>{researchFolder='';resetResearchFilters();render()};
+}
+addArchiveTab=function(){
+  if(view!=='library'||!$('.tabs'))return;
+  researchOriginal.addArchiveTab();
+  const pool=commonResearch?state.sources:state.sources.filter(s=>researchOf().source_ids.includes(s.id));
+  const b=$('[data-scope="archived"]');b.innerHTML=b.innerHTML.replace(/Archives \(\d+\)/,'Archives ('+pool.filter(s=>s.annotation.archived).length+')');
+};
 renderIdeas=function(){
-  if(commonResearch)return researchOriginal.renderIdeas();
-  let items=state.ideas.filter(i=>researchMatches(i,'idea_ids')&&(ideaMode==='archived'?i.archived:!i.archived)&&(ideaMode!=='liked'||i.liked)&&(!ideaTags.length||i.tags?.some(t=>ideaTags.includes(t)))&&(!ideaQuery||norm(i.title+' '+(i.notes||'')).includes(norm(ideaQuery))));
+  if(commonResearch){researchOriginal.renderIdeas();$('.heading h1').textContent='Idées de la bibliothèque commune';installResearchCollectionBar('ideas');return}
+  const r=researchOf(),retained=new Set(r.idea_ids),pool=bookIdeaPool();
+  const archiveCount=pool.filter(i=>i.archived).length;
+  const active=pool.filter(i=>!i.archived);
+  let items=pool.filter(i=>bookIdeaMatches(i)&&(ideaMode==='archived'?i.archived:!i.archived)&&(ideaMode!=='liked'||i.liked)&&(ideaMode!=='retained'||retained.has(i.id))&&(!ideaTags.length||i.tags?.some(t=>ideaTags.includes(t)))&&(!ideaQuery||norm(i.title+' '+(i.notes||'')+' '+(i.tags||[]).join(' ')).includes(norm(ideaQuery))));
   items.sort((a,b)=>researchIdeaSort==='title'?a.title.localeCompare(b.title,'fr'):String(b.created||'').localeCompare(a.created||''));
-  shell(header('La matière du projet','Idées du livre','Retenez les idées utiles et retrouvez leurs références.')+researchControls('idea_ids')+`<div class="tabs"><button data-imode="all" class="${ideaMode==='all'?'active':''}">Toutes les idées</button><button data-imode="liked" class="${ideaMode==='liked'?'active':''}">Favoris</button></div><div class="row"><input id="researchIdeaSearch" type="search" value="${esc(ideaQuery)}" placeholder="Rechercher une idée"><select id="researchIdeaSort"><option value="recent">Derniers ajouts</option><option value="title" ${researchIdeaSort==='title'?'selected':''}>Titre A → Z</option></select><span>${items.length} idées</span></div><div class="idea-list">${items.map(ideaCard).join('')||'<div class="empty">Choisissez des idées dans la bibliothèque commune, ou créez-en depuis une source du livre.</div>'}</div>`);
-  // Existing idea commands retain source references and manuscript insertion.
-  bindIdeas();$$('[data-idea-folder]').forEach(e=>{const id=e.dataset.ideaFolder;const b=document.createElement('button');b.textContent='Classer / notes';b.onclick=()=>classifyResearch('idea_ids',[id]);e.replaceWith(b)});
-  $$('[data-imode]').forEach(b=>b.onclick=()=>{ideaMode=b.dataset.imode;renderIdeas()});bindResearchControls('idea_ids');$('#researchIdeaSearch').oninput=e=>{ideaQuery=e.target.value;preserveInput(renderIdeas,'researchIdeaSearch')};$('#researchIdeaSort').onchange=e=>{researchIdeaSort=e.target.value;renderIdeas()};
+  const shown=items.slice(0,ideaVisibleLimit);
+  shell(header('La matière du projet','Idées du livre','Les idées des sources de ce livre sont disponibles ici. Retenez et classez celles que vous souhaitez travailler.')+researchControls('idea_ids')+`<div class="tabs"><button data-imode="all" class="${ideaMode==='all'?'active':''}">Toutes les idées (${active.length})</button><button data-imode="retained" class="${ideaMode==='retained'?'active':''}">Retenues (${active.filter(i=>retained.has(i.id)).length})</button><button data-imode="liked" class="${ideaMode==='liked'?'active':''}">Favoris</button></div><div class="row"><input id="researchIdeaSearch" type="search" value="${esc(ideaQuery)}" placeholder="Rechercher une idée"><select id="researchIdeaSort"><option value="recent">Derniers ajouts</option><option value="title" ${researchIdeaSort==='title'?'selected':''}>Titre A → Z</option></select><span>${items.length} idées</span></div>${ideaTags.length?`<div class="tagbar">${ideaTags.map(t=>`<button data-remove-project-idea-tag="${esc(t)}" class="tag active">${esc(t)} ×</button>`).join('')}</div>`:''}<div class="idea-list">${shown.map(i=>ideaCard(i)).join('')||'<div class="empty">Aucune idée dans cette sélection. Effacez les filtres ou ouvrez la bibliothèque commune pour retrouver toutes les idées.</div>'}</div>${shown.length<items.length?'<button id="moreProjectIdeas">Afficher 60 idées supplémentaires</button>':''}`);
+  ideaArchiveTotal=archiveCount;
+  bindIdeas();$$('[data-idea-folder]').forEach(e=>{const id=e.dataset.ideaFolder,b=document.createElement('button');b.textContent=retained.has(id)?'Classer / notes':'Retenir pour ce livre';b.onclick=()=>classifyResearch('idea_ids',[id]);e.replaceWith(b)});
+  installResearchCollectionBar('ideas');
+  $$('[data-imode]').forEach(b=>b.onclick=()=>{ideaMode=b.dataset.imode;ideaVisibleLimit=60;renderIdeas()});
+  $$('[data-remove-project-idea-tag]').forEach(b=>b.onclick=()=>{ideaTags=ideaTags.filter(t=>t!==b.dataset.removeProjectIdeaTag);ideaVisibleLimit=60;renderIdeas()});
+  bindResearchControls('idea_ids');$('#researchIdeaSearch').oninput=e=>{ideaQuery=e.target.value;ideaVisibleLimit=60;preserveInput(renderIdeas,'researchIdeaSearch')};$('#researchIdeaSort').onchange=e=>{researchIdeaSort=e.target.value;renderIdeas()};
+  $('#moreProjectIdeas')?.addEventListener('click',()=>{ideaVisibleLimit+=60;renderIdeas()});
 };
 function researchFolderModal(f){
   showModal(`<h2>${f?'Renommer le dossier':'Nouveau dossier du livre'}</h2><form id="researchFolderForm"><label>Nom<input name="name" required maxlength="150" value="${esc(f?.name||'')}"></label>${formActions('Enregistrer')}</form>`);

@@ -49,6 +49,17 @@ const assert=require('node:assert/strict');
       assert.equal(await page.locator('.source-card').count(),0);
       book=await (await context.request.get(base+'/api/book?book_id='+bid)).json();assert(book.research.source_ids.includes(sid));
       assert.equal((await context.request.get(base+'/api/source?id='+sid)).status(),200);
+      // Archive counts follow the selected book; the common archive remains accessible.
+      await context.request.post(base+'/api/annotation',{data:{id:sid,archived:true}});
+      await page.reload();await page.locator('[data-open-book="'+aid+'"]').first().click();await page.locator('#overviewSources').click();
+      assert.match(await page.locator('[data-scope="archived"]').innerText(),/Archives \(0\)/);
+      await page.locator('[data-scope="archived"]').click();await page.locator('#showCommonArchives').click();
+      await page.locator('.card-title[data-open="'+sid+'"]').waitFor();
+      await page.locator('#researchBookSelect').selectOption(bid);await page.locator('#overviewSources').click();
+      assert.match(await page.locator('[data-scope="archived"]').innerText(),/Archives \(1\)/);
+      await page.locator('[data-scope="archived"]').click();await page.locator('[data-archive="'+sid+'"]').click();
+      await page.locator('[data-scope="archived"]').filter({hasText:'Archives (0)'}).waitFor();
+      await page.locator('#researchBookSelect').selectOption(aid);await page.locator('#overviewSources').click();
       // Sources imported from a project join that project automatically.
       await page.locator('#import').click();await page.locator('[data-import-tab="text"]').click();
       await page.locator('#sourceTextForm [name=title]').fill('Source ajoutée '+width);await page.locator('#sourceTextForm [name=author]').fill('Auteur');await page.locator('#sourceTextForm [name=text]').fill('Le texte propre à ce nouveau document.');
@@ -56,9 +67,25 @@ const assert=require('node:assert/strict');
       // Idea membership and contextual notes share the same folder mechanisms.
       const lib=await (await context.request.get(base+'/api/library?book_id='+aid)).json();const imported=lib.sources.find(s=>s.title==='Source ajoutée '+width);
       const idea=await (await context.request.post(base+'/api/idea',{data:{title:'Idée '+width,refs:[{source_id:imported.id,start:0,end:0}]}})).json();
-      await page.reload();await page.locator('[data-open-book="'+aid+'"]').first().click();await page.locator('#overviewIdeas').click();await page.locator('#pickResearch').click();await page.locator('#researchPickerQuery').fill('Idée '+width);await page.locator('[data-research-pick]').check();await page.locator('#researchPickerSave').click();await page.locator('#modal').waitFor({state:'hidden'});await page.getByRole('heading',{name:'Idée '+width,exact:true}).waitFor();
+      await page.reload();await page.locator('[data-open-book="'+aid+'"]').first().click();await page.locator('#overviewIdeas').click();
+      await page.getByRole('heading',{name:'Idée '+width,exact:true}).waitFor();
+      assert.equal(await page.getByRole('button',{name:'Retenir pour ce livre',exact:true}).count(),1);
+      await page.locator('[data-imode="retained"]').click();assert.equal(await page.locator('.idea-card').count(),0);
+      await page.locator('[data-research-collection="common"]').click();await page.locator('#ideaSearch').fill('Idée '+width);await page.getByRole('heading',{name:'Idée '+width,exact:true}).waitFor();
+      await page.locator('[data-research-collection="book"]').click();await page.locator('#pickResearch').click();await page.locator('#researchPickerQuery').fill('Idée '+width);await page.locator('[data-research-pick]').check();await page.locator('#researchPickerSave').click();await page.locator('#modal').waitFor({state:'hidden'});await page.getByRole('heading',{name:'Idée '+width,exact:true}).waitFor();
       await page.getByRole('button',{name:'Classer / notes',exact:true}).click();await page.locator('[name=folder_ids]').first().check();await page.locator('#researchNote').fill('Mon angle pour cette idée');await page.locator('#researchClassifyForm button[type=submit]').click();await page.locator('#modal').waitFor({state:'hidden'});
       book=await (await context.request.get(base+'/api/book?book_id='+aid)).json();assert(book.research.idea_ids.includes(idea.id));assert.equal(book.research.idea_notes[idea.id],'Mon angle pour cette idée');
+      await page.locator('[data-idea-archive="'+idea.id+'"]').click();
+      await page.locator('[data-imode="archived"]').filter({hasText:'Archives (1)'}).waitFor();
+      assert.equal(await page.locator('.idea-card').count(),0);
+      await page.locator('[data-imode="archived"]').click();await page.getByRole('heading',{name:'Idée '+width,exact:true}).waitFor();
+      await page.locator('[data-research-collection="common"]').click();await page.locator('[data-imode="archived"]').click();await page.getByRole('heading',{name:'Idée '+width,exact:true}).waitFor();
+      await page.locator('[data-idea-archive="'+idea.id+'"]').click();await page.locator('[data-imode="archived"]').filter({hasText:'Archives (0)'}).waitFor();
+      // A large source's extracted ideas stay available, with a bounded first page.
+      for(let n=0;n<60;n++)assert.equal((await context.request.post(base+'/api/idea',{data:{title:`Autre idée ${width} ${n}`,refs:[{source_id:imported.id,start:0,end:0}]}})).status(),200);
+      await page.reload();await page.locator('[data-open-book="'+aid+'"]').first().click();await page.locator('#overviewIdeas').click();
+      assert.equal(await page.locator('.idea-card').count(),60);await page.locator('#moreProjectIdeas').click();assert.equal(await page.locator('.idea-card').count(),61);
+      assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
       await nav('book');await page.locator('#exportOptions').waitFor();assert(await page.locator('#bookCovers').isVisible());assert(await page.locator('#mediaLibrary').isVisible());assert.equal(await page.locator('.book-secondary-actions #exportOptions').count(),0);
       await nav('books');await page.screenshot({path:path.join(process.env.TEMP||'/tmp',`atelier-books-${width}.png`),fullPage:true});
       assert.deepEqual(errors,[]);await context.close();
