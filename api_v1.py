@@ -6,6 +6,7 @@ machine API keep sharing the same data model.
 """
 import json
 import re
+from research import update as update_research, filter_items
 from urllib.parse import parse_qs
 
 
@@ -109,7 +110,7 @@ class ApiV1:
                 if archived is not None and bool(source['annotation'].get('archived')) != archived:continue
                 out.append(source)
         out.sort(key=lambda x: (x.get('date',''), x.get('added_at','')), reverse=True)
-        return self.page(out, query)
+        return self.page(filter_items(self.a.studio, out, query, 'source_ids'), query)
 
     def transcript(self, sid, data=None, delete=False):
         source = self.a.get_source(sid); source.pop('annotation', None)
@@ -226,7 +227,7 @@ class ApiV1:
         liked=self.boolean_filter(query,'liked');archived=self.boolean_filter(query,'archived')
         if liked is not None:items=[x for x in items if bool(x.get('liked')) == liked]
         if archived is not None:items=[x for x in items if bool(x.get('archived')) == archived]
-        return self.page(sorted(items, key=lambda x:x.get('created',''), reverse=True), query)
+        return self.page(filter_items(self.a.studio, items, query, 'idea_ids'), query)
 
     def delete_idea(self, iid):
         with self.a.connect() as c:
@@ -288,7 +289,10 @@ class ApiV1:
             item=json.loads(row[0])
             if method == 'GET': return handler.reply(item) or True
             if method in ('PUT','PATCH'): return handler.reply(self.a.save_idea({**item, **data, 'id':iid})) or True
-        if tail == '/folders' and method == 'GET': return handler.reply({'items':self.folders()}) or True
+        if tail == '/folders' and method == 'GET':
+            bid=query.get('book_id',[''])[0]
+            items=self.a.studio.book(bid).get('research',{}).get('folders',[]) if bid else self.folders()
+            return handler.reply({'items':sorted(items,key=lambda x:x['name'].casefold(),reverse=query.get('order',['asc'])[0]=='desc')}) or True
         if tail == '/folders' and method == 'POST':
             name=self.a.required(data,'name',150); item={'id':self.a.uid(),'name':name}
             with self.a.connect() as c:c.execute('INSERT INTO folders VALUES(?,?)',(item['id'],name))
@@ -304,6 +308,13 @@ class ApiV1:
                 return handler.reply({'id':fid,'name':name}) or True
         if tail == '/books' and method == 'GET': return handler.reply({'items':self.a.studio.books()}) or True
         if tail == '/books' and method == 'POST': return handler.reply(self.a.studio.create_book(data),201) or True
+        match=re.fullmatch(r'/books/([^/]+)/research',tail)
+        if match:
+            bid=match[1]
+            if method == 'GET':
+                b=self.a.studio.book(bid)
+                return handler.reply({'book_id':bid,'revision':b['_revision'],'research':b.get('research',{})}) or True
+            if method in ('PATCH','POST'):return handler.reply(update_research(self.a.studio,bid,data)) or True
         match=re.fullmatch(r'/books/([^/]+)',tail)
         if match:
             bid=match[1]

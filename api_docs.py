@@ -44,6 +44,10 @@ def openapi_document():
       '/api/v1/folders/{folder_id}':{'put':op('Renommer un dossier',body=True),'patch':op('Renommer un dossier',body=True),'delete':op('Supprimer un dossier','Le contenu est conservé et simplement déclassé.')},
       '/api/v1/books':{'get':op('Lister les projets de livre'),'post':op('Créer un projet de livre','Corps : title et, facultativement, author.',True,True)},
       '/api/v1/books/{book_id}':{'get':op('Lire un livre'),'put':op('Enregistrer un livre',body=True),'patch':op('Modifier un livre','Fusionne les champs fournis et crée une version.',True),'delete':op('Supprimer un livre','Le livre principal book-main ne peut pas être supprimé.')},
+      '/api/v1/books/{book_id}/research':{
+        'get':op('Lire la matière et les dossiers du livre','Retourne research et revision. Les originaux restent communs.'),
+        'patch':op('Organiser la matière du livre','Fournir revision et action : add, remove, classify, notes, folder-create, folder-rename ou folder-delete. source_ids/idea_ids : 200 maximum. classify utilise folder_ids et mode add/remove/replace. notes utilise note ; création/renommage utilise name ; renommage/suppression utilise folder_id. Chaque opération crée une version. Une révision périmée renvoie 409.',True),
+        'post':op('Organiser la matière du livre','Alias de PATCH. Retirer une appartenance conserve l’original et ses références dans le manuscrit.',True)},
       '/api/v1/related':{'get':op('Lister les rapprochements entre idées')},
       '/api/v1/jobs':{'get':op('Lister les travaux d’analyse IA')},
       '/api/v1/analysis':{'post':op('Lancer une analyse IA','Corps : {"source_ids":["…"]}, de 1 à 20 sources transcrites.',True)},
@@ -77,6 +81,20 @@ def openapi_document():
     for path in ('/api/v1/sources','/api/v1/ideas'):
         paths[path]['get'].setdefault('parameters',[]).extend(pagination)
         paths[path]['get']['parameters'].extend([{'name':'liked','in':'query','description':'Filtrer les favoris.','schema':{'type':'boolean'}},{'name':'archived','in':'query','description':'Filtrer le contenu archivé ou actif.','schema':{'type':'boolean'}}])
+        paths[path]['get']['parameters'].extend([
+            {'name':'book_id','in':'query','description':'Limiter à la matière du livre.','schema':{'type':'string'}},
+            {'name':'folder_id','in':'query','description':'Dossier du livre ; requiert book_id.','schema':{'type':'string'}},
+            {'name':'unfiled','in':'query','description':'Éléments à classer ; requiert book_id.','schema':{'type':'boolean'}},
+            {'name':'sort','in':'query','schema':{'type':'string','enum':['recent','added','title','duration'],'default':'recent'}},
+            {'name':'order','in':'query','schema':{'type':'string','enum':['asc','desc']}}])
+    paths['/api/v1/folders']['get']['parameters']=[{'name':'book_id','in':'query','description':'Retourne les dossiers de ce livre. Sans ce paramètre : anciens dossiers communs.','schema':{'type':'string'}},{'name':'order','in':'query','schema':{'type':'string','enum':['asc','desc']}}]
+    research_schema={'type':'object','properties':{'source_ids':{'type':'array','items':{'type':'string'}},'idea_ids':{'type':'array','items':{'type':'string'}},'folders':{'type':'array','items':{'type':'object'}},'source_notes':{'type':'object','additionalProperties':{'type':'string'}},'idea_notes':{'type':'object','additionalProperties':{'type':'string'}}}}
+    schemas['BookInput']['properties'].update(description={'type':'string','maxLength':6000},project_status={'type':'string','enum':['preparation','writing','done']},research=research_schema)
+    schemas['BookPatch']['properties'].update(description={'type':'string','maxLength':6000},project_status={'type':'string','enum':['preparation','writing','done']},research=research_schema)
+    schemas['ResearchInput']={'type':'object','required':['revision','action'],'properties':{'revision':{'type':'string'},'action':{'type':'string','enum':['add','remove','classify','notes','folder-create','folder-rename','folder-delete']},'source_ids':{'type':'array','maxItems':200,'items':{'type':'string'}},'idea_ids':{'type':'array','maxItems':200,'items':{'type':'string'}},'folder_id':{'type':'string'},'folder_ids':{'type':'array','items':{'type':'string'}},'mode':{'type':'string','enum':['add','remove','replace']},'name':{'type':'string','maxLength':150},'note':{'type':'string','maxLength':6000}}}
+    for method in ('patch','post'):
+        paths['/api/v1/books/{book_id}/research'][method]['requestBody']['content']['application/json']['schema']={'$ref':'#/components/schemas/ResearchInput'}
+        paths['/api/v1/books/{book_id}/research'][method]['responses']['409']={'description':'Le livre a changé ; recharger sa révision.'}
     body_schemas={
       ('/api/v1/sources','post'):'SourceInput',('/api/v1/sources/youtube','post'):'YouTubeInput',
       ('/api/v1/sources/tags','post'):'SourceTagsInput',
@@ -105,6 +123,7 @@ def api_documentation():
       ('Annotations','GET, PUT, PATCH','/api/v1/sources/{id}/annotation','Notes, tags, favori, état de lecture et dossier.'),
       ('Idées','GET, POST, PATCH, DELETE','/api/v1/ideas','Gérer les idées et leurs références horodatées.'),
       ('Dossiers','GET, POST, PATCH, DELETE','/api/v1/folders','Classer les sources et les idées.'),
+      ('Matière d’un livre','GET, PATCH, POST','/api/v1/books/{book_id}/research','Associer sources et idées, classer dans plusieurs dossiers, conserver des notes propres au livre. Utiliser book_id, folder_id, unfiled, sort et order sur les listes de sources/idées.'),
       ('Livres','GET, POST, PATCH, DELETE','/api/v1/books','Gérer les projets, chapitres et blocs éditoriaux.'),
       ('Analyse IA','POST','/api/v1/analysis','Lancer une analyse de 1 à 20 sources.'),
       ('Travaux','GET','/api/v1/jobs','Suivre les analyses asynchrones.')]

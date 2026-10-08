@@ -131,8 +131,16 @@ renderBook=function(){
   commands.insertAdjacentHTML('afterend','<nav class="book-modes" aria-label="Modes du livre"><button aria-current="page" id="modeWrite">Écrire</button><button id="modeRead">Lire</button><button id="modeReview">Relire</button></nav>');
   $('#modeWrite').onclick=()=>$('#chapterTitle')?.focus();$('#modeRead').onclick=()=>$('#readBook').click();
   $('#modeReview').onclick=()=>run(async()=>{await $('#readBook').onclick();if(reading?.book_id)ReaderAuthor.reviews()});
-  const details=document.createElement('details');details.className='book-secondary-actions';details.innerHTML='<summary>Outils du livre</summary><div></div>';commands.append(details);
-  for(const id of ['bookCovers','mediaLibrary','exportOptions','bookLayout','bookHistory'])details.lastElementChild.append($('#'+id));
+  const actions=document.createElement('section');actions.className='book-access-actions';actions.setAttribute('aria-label','Téléchargement et présentation du livre');
+  actions.innerHTML='<div><strong>Votre livre</strong><span>Couverture, illustrations et fichier à emporter</span></div><div class="book-access-buttons"></div>';
+  $('.heading').after(actions);
+  for(const id of ['exportOptions','bookCovers','mediaLibrary'])actions.lastElementChild.append($('#'+id));
+  $('#exportOptions').classList.add('primary');$('#exportOptions').innerHTML=uiIcon('↓')+' Télécharger le livre';
+  $('#bookCovers').textContent=bookDraft.covers?.front?'Modifier la couverture':'Ajouter une couverture';
+  $('#bookCovers').onclick=()=>bookDraft.covers?.front?coverModal():coverPickerModal('front');
+  $('#mediaLibrary').textContent='Images et schémas';
+  const details=document.createElement('details');details.className='book-secondary-actions';details.innerHTML='<summary>Plus d’options</summary><div></div>';commands.append(details);
+  for(const id of ['bookLayout','bookHistory'])details.lastElementChild.append($('#'+id));
   const ch=currentChapter();if(ch){$('.chapter-toolbar').insertAdjacentHTML('afterend',`<label class="chapter-status">État du chapitre <select id="chapterReviewStatus"><option value="draft">Brouillon</option><option value="review">À revoir</option><option value="done">Terminé</option></select></label>`);$('#chapterReviewStatus').value=ch.status||'draft';$('#chapterReviewStatus').onchange=e=>{ch.status=e.target.value;changed('Statut du chapitre · '+ch.title)}}
   function outlineStatuses(){for(const btn of $$('[data-chapter-id]')){let label=btn.querySelector('.author-chapter-status');if(!label){label=document.createElement('small');label.className='author-chapter-status';btn.append(label)}const chapter=bookDraft.chapters.find(c=>c.id===btn.dataset.chapterId);label.textContent=({draft:'Brouillon',review:'À revoir',done:'Terminé'})[chapter?.status||'draft']}}
   outlineStatuses();$('#chapterReviewStatus')?.addEventListener('change',outlineStatuses);

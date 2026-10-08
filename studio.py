@@ -66,6 +66,8 @@ class Studio:
                 c.execute('INSERT INTO book_versions(id,created,label,payload,changes,book_id) VALUES(?,?,?,?,?,?)',(book['_revision'],self.a.now(),'Point de départ',self.a.dumps(book),'[]','book-main'))
                 c.execute("INSERT OR REPLACE INTO settings VALUES('book',?)",(self.a.dumps(book),))
                 c.execute('INSERT INTO books VALUES(?,?,?,?)',('book-main',self.a.dumps(book),self.a.now(),self.a.now()))
+        from research import migrate
+        migrate(self)
     def normalize(self,book):
         book=json.loads(json.dumps(book))
         book.setdefault('author','');book.setdefault('subtitle','')
@@ -83,15 +85,26 @@ class Studio:
         return json.loads(row[0])
     def books(self):
         with self.a.connect() as c:rows=c.execute('SELECT * FROM books ORDER BY updated DESC').fetchall()
-        return [dict(id=r['id'],title=json.loads(r['payload'])['title'],author=json.loads(r['payload']).get('author',''),chapters=len(json.loads(r['payload'])['chapters']),updated=r['updated']) for r in rows]
+        result=[]
+        for row in rows:
+            b=json.loads(row['payload']);r=b.get('research',{})
+            result.append(dict(id=row['id'],title=b['title'],author=b.get('author',''),description=b.get('description',''),cover=b.get('covers',{}).get('front',''),project_status=b.get('project_status','writing' if b['chapters'] else 'preparation'),chapters=len(b['chapters']),sources=len(r.get('source_ids',[])),ideas=len(r.get('idea_ids',[])),folders=len(r.get('folders',[])),updated=row['updated']))
+        return result
     def create_book(self,data):
         title=self.a.required(data,'title',300);bid=self.a.uid();b=self.normalize(dict(title=title,author=str(data.get('author',''))[:300],chapters=[],_book_id=bid,_revision=self.a.uid()))
+        b['description']=str(data.get('description',''))[:6000]
+        from research import initial
+        b['research']=initial(b)
         with self.a.connect() as c:
             c.execute('INSERT INTO books VALUES(?,?,?,?)',(bid,self.a.dumps(b),self.a.now(),self.a.now()))
             c.execute('INSERT INTO book_versions(id,created,label,payload,changes,book_id) VALUES(?,?,?,?,?,?)',(b['_revision'],self.a.now(),'Création du projet',self.a.dumps(b),'[]',bid))
         return b
     def validate_book(self,b):
         self.a.required(b,'title',300)
+        from research import validate
+        validate(self.a,b.get('research',{}))
+        if not isinstance(b.get('description',''),str) or len(b.get('description',''))>6000:raise ValueError('Description du livre invalide.')
+        if b.get('project_status','preparation') not in ('preparation','writing','done'):raise ValueError('État du projet invalide.')
         brief=b.get('brief',{})
         if not isinstance(brief,dict) or any(not isinstance(brief.get(k,''),str) or len(brief.get(k,''))>6000 for k in ('intention','reader','promise','voice')):raise ValueError('Intention du livre invalide.')
         source_ids=b.get('source_ids',[])
@@ -145,7 +158,7 @@ class Studio:
         out=[]
         def add(path,label,a,b,**extra):
             if a!=b:out.append(dict(path=path,label=label,before=a,after=b,**extra))
-        for k,l in [('title','Titre du livre'),('subtitle','Sous-titre'),('author','Auteur'),('covers','Couvertures'),('layout','Mise en page'),('brief','Intention et lecteur'),('source_ids','Sources du projet'),('editorial_proposal','Proposition de l’accompagnateur')]:add(k,l,old.get(k,''),new.get(k,''))
+        for k,l in [('title','Titre du livre'),('subtitle','Sous-titre'),('author','Auteur'),('covers','Couvertures'),('layout','Mise en page'),('brief','Intention et lecteur'),('source_ids','Sources du projet'),('research','Matière et dossiers du livre'),('description','Description du projet'),('project_status','État du projet'),('editorial_proposal','Proposition de l’accompagnateur')]:add(k,l,old.get(k,''),new.get(k,''))
         oc={x['id']:x for x in old.get('chapters',[])};nc={x['id']:x for x in new.get('chapters',[])}
         add('review_notes','Notes de relecture',old.get('review_notes',[]),new.get('review_notes',[]))
         add('order','Ordre des chapitres',[x['id'] for x in old.get('chapters',[])],[x['id'] for x in new.get('chapters',[])])
@@ -180,6 +193,16 @@ class Studio:
             current=json.loads(row[0])
             if data.get('_revision')!=current.get('_revision'):
                 raise Conflict('Le livre a changé sur un autre appareil. Votre brouillon est conservé : rechargez la dernière version avant de le reporter.')
+            if 'research' not in candidate and 'research' in current:candidate['research']=current['research']
+            # New editorial selections and manuscript ideas join the research space.
+            # Removing research membership alone does not remove manuscript references.
+            if 'research' in candidate:
+                r=candidate['research']
+                new_sources=[x for x in candidate.get('source_ids',[]) if x not in current.get('source_ids',[])]
+                old_ideas={i for ch in current.get('chapters',[]) for i in ch.get('ideas',[])}
+                new_ideas=[i for ch in candidate.get('chapters',[]) for i in ch.get('ideas',[]) if i not in old_ideas]
+                r['source_ids']=list(dict.fromkeys([*r.get('source_ids',[]),*new_sources]))
+                r['idea_ids']=list(dict.fromkeys([*r.get('idea_ids',[]),*new_ideas]))
             changes=self.changes(current,candidate)
             if not changes and not restore:return current
             candidate['_revision']=self.a.uid()

@@ -139,7 +139,7 @@ L’export JSON historique contient les métadonnées des fichiers, pas leurs co
 
 ## Éditer pendant la lecture
 
-Dans **Mon livre**, les modes **Écrire**, **Lire** et **Relire** donnent accès au manuscrit, à la lecture paginée et aux notes de relecture. Les commandes de couverture, médias, export, mise en page et historique sont regroupées dans **Outils du livre**.
+Dans **Mon livre**, les modes **Écrire**, **Lire** et **Relire** donnent accès au manuscrit, à la lecture paginée et aux notes de relecture. Les boutons **Télécharger le livre**, **Ajouter / Modifier la couverture** et **Images et schémas** sont visibles dans la vue d’ensemble du projet et en haut du manuscrit. Le téléchargement propose PDF, EPUB et Markdown. La mise en page et l’historique restent dans **Plus d’options**. Sans couverture, le bouton ouvre directement l’import de photo ; son choix est enregistré et apparaît sur la carte du livre.
 
 Pendant la lecture, touchez un paragraphe puis **Modifier**. Un panneau latéral s’ouvre sur ordinateur ; sur téléphone, il occupe l’écran. Le paragraphe entier est éditable, même s’il s’étend sur plusieurs pages, avec le contexte précédent et suivant. **Enregistrer et reprendre la lecture** retrouve ce passage après la nouvelle pagination. Les corrections et les notes utilisent les mêmes brouillons locaux, versions et protections contre les conflits que l’éditeur.
 
@@ -167,3 +167,34 @@ Les tests utilisent une base temporaire : authentification et déconnexion, limi
 ## Modifier le mot de passe
 
 Dans **Réglages → Mot de passe de l’atelier**, saisir le mot de passe actuel, puis le nouveau deux fois (6 à 256 caractères, sans règle de composition). Toutes les sessions sont déconnectées après validation. Le nouveau mot de passe est enregistré uniquement sous forme d’empreinte scrypt salée dans la base SQLite, hors export JSON, et prime sur le mot de passe initial de `.local-config.json` au redémarrage. Le fichier `Acces-local.txt` contient uniquement le mot de passe initial et ne sera plus à jour après ce changement.
+
+
+## Commencer par ses livres
+
+L’accueil **Mes livres** présente les projets avec leur couverture, leur description et leur état (en préparation, en écriture, terminé). Créer un livre, puis ouvrir son espace : **Vue d’ensemble**, **Dossiers**, **Sources**, **Idées** et **Manuscrit**. Le sélecteur de livre reste visible pendant la recherche et l’écriture.
+
+Les sources et idées restent communes, mais chaque livre conserve ses appartenances, ses dossiers et ses notes de travail. **Choisir dans la bibliothèque commune** ajoute les éléments au livre ; **Classer / notes** permet de choisir plusieurs dossiers. **À classer** retrouve les éléments sans dossier. Retirer un élément du livre conserve l’original, les autres projets et les références déjà présentes dans le manuscrit. Supprimer un dossier conserve son contenu dans le livre. Les imports réalisés depuis un projet sont rattachés à ce projet.
+
+L’ancien fonds et ses dossiers sont repris dans le livre principal au premier démarrage de cette version. Les autres projets reprennent leurs sources éditoriales et leurs idées de chapitres. Les classements font partie du livre, de ses versions et de la sauvegarde complète. La sélection de 60 sources dans le manuscrit sert aux préparations IA ; la matière du livre peut contenir davantage de documents.
+
+### Organiser par API
+
+Avec le jeton Atelier habituel, lire `GET /api/v1/books/{book_id}/research` pour obtenir la révision et la matière. Envoyer ensuite `PATCH` (ou `POST`) au même chemin avec `revision` et `action`. Actions : `add`, `remove`, `classify`, `notes`, `folder-create`, `folder-rename`, `folder-delete`.
+
+Exemple pour classer des vidéos dans plusieurs dossiers du livre :
+
+```json
+{
+  "revision": "revision-obtenue-par-GET",
+  "action": "classify",
+  "source_ids": ["source-video-1", "source-video-2"],
+  "folder_ids": ["dossier-peur", "dossier-relations"],
+  "mode": "add"
+}
+```
+
+Les modes `add`, `remove` et `replace` ajoutent, retirent ou remplacent les appartenances aux dossiers. Utiliser `idea_ids` pour les idées ; 200 éléments maximum par opération. `folder-create` reçoit `name`, le renommage reçoit `folder_id` et `name`, la suppression reçoit `folder_id`. `notes` reçoit les identifiants et `note`. Une révision périmée renvoie HTTP 409 ; relire le livre avant de réessayer.
+
+Les listes `/api/v1/sources` et `/api/v1/ideas` acceptent `book_id`, `folder_id`, `unfiled=true`, `sort=title|recent|added|duration` et `order=asc|desc`, avec les filtres et la pagination existants. Exemple : `/api/v1/sources?book_id=…&kind=Vidéo&sort=title&order=asc`. `/api/v1/folders?book_id=…` retourne les dossiers du livre triés par nom. Sans `book_id`, l’ancienne API des dossiers communs reste disponible. La documentation `/api` et le schéma `/api/openapi.json` décrivent ces commandes.
+
+Vérification du parcours complet sur ordinateur et téléphone : `node tests/research-books.cjs` avec Playwright installé.
