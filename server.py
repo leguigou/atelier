@@ -676,6 +676,13 @@ def export_book(book_id=None):
     out=['# '+lib['book']['title'],'','Dossier de travail — les propositions et déclarations restent à vérifier.','']
     for chapter in lib['book']['chapters']:
         out+=['## '+chapter['title'],'',chapter.get('notes',''),'']
+        for block in chapter.get('blocks',[]):
+            text=block.get('text','');kind=block.get('type')
+            if kind=='heading':out+=['### '+text,'']
+            elif kind=='quote':out+=['> '+text.replace('\n','\n> '),'']
+            elif kind=='image':out+=['!['+block.get('caption','').replace(']','\\]')+'](/api/asset?id='+block['asset_id']+'&preview=1)','']
+            elif kind=='pagebreak':out+=['---','']
+            else:out+=[text,'']
         for iid in chapter.get('ideas',[]):
             if iid not in ideas: continue
             idea=ideas[iid]; out+=['### '+idea['title'],'',f"{idea.get('nature','')} · {idea.get('status','À vérifier')}",'',idea.get('notes',''),'']
@@ -879,6 +886,7 @@ class Handler(BaseHTTPRequestHandler):
                     lib['backup_note']='Les fichiers binaires sont dans data/media : sauvegardez aussi ce dossier.'
                 return self.reply(lib)
             files={'/research.js':('research.js','text/javascript; charset=utf-8'),'/research.css':('research.css','text/css; charset=utf-8'),'/author.js':('author.js','text/javascript; charset=utf-8'),'/safety.js':('safety.js','text/javascript; charset=utf-8'),'/agent.js':('agent.js','text/javascript; charset=utf-8'),'/agent.css':('agent.css','text/css; charset=utf-8'),'/tags.js':('tags.js','text/javascript; charset=utf-8'),'/tags.css':('tags.css','text/css; charset=utf-8'),'/editorial.js':('editorial.js','text/javascript; charset=utf-8'),'/':('index.html','text/html; charset=utf-8'),'/app.js':('app.js','text/javascript; charset=utf-8'),'/studio.js':('studio.js','text/javascript; charset=utf-8'),'/style.css':('style.css','text/css; charset=utf-8'),'/mobile.css':('mobile.css','text/css; charset=utf-8'),'/api.css':('api.css','text/css; charset=utf-8'),'/prompts.css':('prompts.css','text/css; charset=utf-8'),'/favicon.svg':('favicon.svg','image/svg+xml'),'/fonts/BookSerif.ttf':('fonts/BookSerif.ttf','font/ttf')}
+            files.update({'/formatting.js':('formatting.js','text/javascript; charset=utf-8'),'/formatting.css':('formatting.css','text/css; charset=utf-8'),'/vendor/markdown-it.min.js':('vendor/markdown-it.min.js','text/javascript; charset=utf-8')})
             if p.path not in files: return self.reply({'error':'Introuvable'},404)
             name,mime=files[p.path]; return self.reply((ROOT/'public'/name).read_bytes(),ctype=mime)
         except (ValueError,KeyError) as e: self.reply({'error':str(e)},400)

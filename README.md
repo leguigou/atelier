@@ -23,6 +23,8 @@ Les fichiers Docker/Dokploy ci-dessous restent une alternative d'hébergement, n
 
 ## Fonctionnalités
 
+- Mise en forme du manuscrit : barre Markdown par bloc avec raccourcis Ctrl/Cmd+B et Ctrl/Cmd+I, aperçu et guide de 27 exemples insérables (titres, caractères, paragraphes, retours à la ligne, citations, listes imbriquées, tableaux alignés, liens, images importées, code et caractères littéraux). Extensions Atelier : `++souligné++`, `==surligné==`, `m^2^`, `H~2~O`. Le HTML reste du texte et les images doivent provenir de la médiathèque. La lecture, le PDF et l’EPUB interprètent le formatage ; le téléchargement Markdown conserve le manuscrit et les références. Alignement, alinéa, espace entre paragraphes et interligne disposent d’un aperçu dans « Mise en page ». Le guide indique les limites de compatibilité. Pour vérifier : `python -m unittest test_markdown` et `node tests/markdown-formatting.cjs` depuis le dossier `atelier` (avec ses dépendances et Playwright).
+
 - Bibliothèque : recherche SQLite FTS5 dans les titres, auteurs, tags et textes ; plusieurs mots dans un ordre différent, recherche sans accents et préfixes ; extraits classés par pertinence, ouverture directe du passage (timecode, page ou section) ; tri ; filtres par auteur, format, disponibilité, statut, tag et dossier ; favoris.
 - Lecture : lecteur YouTube intégré, liens directs de secours, segments horodatés, sélection de passages, notes, tags, avancement et chapitres manuels.
 - Idées : citations issues des vrais segments, plusieurs références conservées, classement, favoris, relecture, notes de contexte et limites.

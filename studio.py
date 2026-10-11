@@ -5,6 +5,7 @@ from io import BytesIO
 from urllib.parse import urlparse, parse_qs, unquote
 from defusedxml import ElementTree as ET
 from PIL import Image, ImageOps
+from book_markdown import render as render_markdown, pdf_flowables
 try:
     from pillow_heif import register_heif_opener
     register_heif_opener()
@@ -175,8 +176,9 @@ class Studio:
                 if not isinstance(note.get(key,''),str) or len(note.get(key,''))>limit:raise ValueError('Note de relecture invalide.')
             if type(note.get('offset',0)) is not int or not 0<=note.get('offset',0)<=5_000_000 or type(note.get('done',False)) is not bool:raise ValueError('Emplacement de note invalide.')
         layout=b.get('layout',{})
-        for key,lo,hi in [('font_size',9,16),('line_height',1.2,2),('margin',10,25)]:
+        for key,lo,hi in [('font_size',9,16),('line_height',1.2,2),('margin',10,25),('paragraph_indent',0,10),('paragraph_spacing',0,16)]:
             if not lo<=float(layout.get(key,lo))<=hi:raise ValueError('Réglage de mise en page invalide.')
+        if layout.get('alignment','justify') not in ('left','justify','center','right'):raise ValueError('Alignement invalide.')
     def changes(self,old,new):
         out=[]
         def add(path,label,a,b,**extra):
@@ -523,7 +525,7 @@ class Studio:
     def pdf(self,book_id=None):
         from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Image as RLImage, KeepTogether
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
+        from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT, TA_RIGHT
         from reportlab.lib.pagesizes import A5
         from reportlab.lib.units import mm
         from reportlab.pdfbase import pdfmetrics
@@ -537,8 +539,9 @@ class Studio:
             if 'BookSerif' not in pdfmetrics.getRegisteredFontNames():pdfmetrics.registerFont(TTFont('BookSerif',str(fontpath)))
             font='BookSerif'
         else:font='Times-Roman'
-        styles=getSampleStyleSheet();body=ParagraphStyle('BookBody',fontName=font,fontSize=size,leading=leading,spaceAfter=8,alignment=TA_JUSTIFY,splitLongWords=True)
-        heading=ParagraphStyle('BookHeading',parent=body,fontSize=size*1.6,leading=size*2,spaceAfter=18,alignment=0)
+        pdfmetrics.registerFontFamily(font,normal=font,bold='Times-Bold',italic='Times-Italic',boldItalic='Times-BoldItalic')
+        styles=getSampleStyleSheet();body=ParagraphStyle('BookBody',fontName=font,fontSize=size,leading=leading,spaceAfter=float(b['layout'].get('paragraph_spacing',8)),firstLineIndent=float(b['layout'].get('paragraph_indent',0))*mm,alignment={'left':TA_LEFT,'justify':TA_JUSTIFY,'center':TA_CENTER,'right':TA_RIGHT}.get(b['layout'].get('alignment','justify'),TA_JUSTIFY),splitLongWords=True)
+        heading=ParagraphStyle('BookHeading',parent=body,fontSize=size*1.6,leading=size*2,spaceAfter=18,alignment=0,firstLineIndent=0)
         quote=ParagraphStyle('BookQuote',parent=body,leftIndent=12,rightIndent=8,textColor='#596457')
         caption=ParagraphStyle('BookCaption',parent=body,fontSize=9,leading=12,alignment=TA_CENTER)
         clean=lambda s:html.escape(str(s)).replace('\n','<br/>')
@@ -548,6 +551,11 @@ class Studio:
             with Image.open(path) as im:iw,ih=im.size
             scale=min(width/iw,(A5[1]-2*margin)/ih)
             return RLImage(str(path),width=iw*scale,height=ih*scale)
+        def markdown_image(src):
+            match=re.fullmatch(r'/api/asset\?id=([a-zA-Z0-9_-]+)(?:&preview=1)?',src)
+            if not match:return None
+            try:return cover_flowable(match[1])
+            except (KeyError,ValueError,FileNotFoundError):return None
         front=b.get('covers',{}).get('front','');back=b.get('covers',{}).get('back','')
         if front:story=[cover_flowable(front),PageBreak()]
         else:story=[Spacer(1,35*mm),Paragraph(clean(b['title']),ParagraphStyle('Title',parent=heading,fontSize=26,leading=34,alignment=TA_CENTER)),Paragraph(clean(b.get('subtitle','')),caption),Spacer(1,15*mm),Paragraph(clean(b.get('author','')),caption),PageBreak()]
@@ -565,6 +573,7 @@ class Studio:
                     parts=[picture]
                     if block.get('caption'):parts.extend([Spacer(1,7),Paragraph(clean(block['caption']),caption)])
                     story.append(KeepTogether(parts));story.append(Spacer(1,10))
+                elif typ in ('text','heading','quote'):story.extend(pdf_flowables(block.get('text',''),heading if typ=='heading' else quote if typ=='quote' else body,heading,quote,width,markdown_image))
                 else:
                     for p in re.split(r'\n\s*\n',block.get('text','')):
                         if p.strip():story.append(Paragraph(clean(p),heading if typ=='heading' else quote if typ=='quote' else body))
@@ -594,11 +603,24 @@ class Studio:
                         if aid not in pictures:z.writestr('OEBPS/images/'+aid+'.png',(self.media/a['preview']).read_bytes());pictures[aid]=True
                         content+=f'<figure><img src="images/{aid}.png" alt="{esc(block.get("alt",block.get("caption","")))}"/><figcaption>{esc(block.get("caption",""))}</figcaption></figure>'
                     elif typ=='pagebreak':content+='<hr class="pagebreak"/>'
+                    elif typ in ('text','heading','quote'):
+                        markup=render_markdown(block.get('text',''))
+                        def epub_image(match):
+                            aid=match[1]
+                            try:a=self.asset(aid)
+                            except ValueError:return match[0]
+                            if aid not in pictures:z.writestr('OEBPS/images/'+aid+'.png',(self.media/a['preview']).read_bytes());pictures[aid]=True
+                            return 'src="images/'+aid+'.png"'
+                        markup=re.sub(r'src="/api/asset\?id=([a-zA-Z0-9_-]+)(?:&amp;preview=1)?"',epub_image,markup)
+                        if typ=='heading':markup=markup.replace('<p>','<h2>').replace('</p>','</h2>')
+                        elif typ=='quote':markup='<blockquote>'+markup+'</blockquote>'
+                        content+=markup
                     else:
                         tag={'heading':'h2','quote':'blockquote'}.get(typ,'p');content+=f'<{tag}>'+esc(block.get('text','')).replace('\n','<br/>')+f'</{tag}>'
                 name=f'ch{n}.xhtml';z.writestr('OEBPS/'+name,'<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml" xml:lang="fr"><head><title>'+esc(ch['title'])+'</title><link rel="stylesheet" href="style.css"/></head><body'+(' class="cover"' if is_cover else '')+'>'+content+'</body></html>')
                 items.append(f'<item id="ch{n}" href="{name}" media-type="application/xhtml+xml"/>');spine.append(f'<itemref idref="ch{n}"/>');nav.append(f'<li><a href="{name}">{esc(ch["title"])}</a></li>')
-            z.writestr('OEBPS/style.css','body{font-family:serif;line-height:1.6;margin:5%;}img{max-width:100%;max-height:80vh;}figure{margin:1em 0;text-align:center;}figcaption{font-size:.85em;}h1,h2{break-after:avoid;}blockquote{margin:1em;color:#455346;}.pagebreak{break-before:page;border:0;}body.cover{margin:0;text-align:center;}body.cover figure{margin:0;}body.cover img{max-height:100vh;}')
+            layout=b.get('layout',{});paragraph_css='p{text-align:'+layout.get('alignment','justify')+';text-indent:'+str(float(layout.get('paragraph_indent',0)))+'mm;margin-bottom:'+str(float(layout.get('paragraph_spacing',8)))+'pt;}body{line-height:'+str(float(layout.get('line_height',1.55)))+';}table{width:100%;border-collapse:collapse;table-layout:fixed;}td,th{border:1px solid #cbd3c3;padding:.4em;overflow-wrap:anywhere;}pre{white-space:pre-wrap;}code{font-family:monospace;}'
+            z.writestr('OEBPS/style.css','body{font-family:serif;line-height:1.6;margin:5%;}img{max-width:100%;max-height:80vh;}figure{margin:1em 0;text-align:center;}figcaption{font-size:.85em;}h1,h2{break-after:avoid;}blockquote{margin:1em;color:#455346;}.pagebreak{break-before:page;border:0;}body.cover{margin:0;text-align:center;}body.cover figure{margin:0;}body.cover img{max-height:100vh;}'+paragraph_css)
             z.writestr('OEBPS/nav.xhtml','<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>Sommaire</title></head><body><nav epub:type="toc"><h1>Sommaire</h1><ol>'+''.join(nav)+'</ol></nav></body></html>')
             assets=''.join(f'<item id="img{aid}" href="images/{aid}.png" media-type="image/png"'+(' properties="cover-image"' if aid==front else '')+'/>' for aid in pictures)
             opf='<?xml version="1.0" encoding="utf-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="bookid">urn:uuid:'+esc(b['_revision'])+'</dc:identifier><dc:title>'+esc(b['title'])+'</dc:title><dc:creator>'+esc(b.get('author',''))+'</dc:creator><dc:language>fr</dc:language><meta property="dcterms:modified">'+self.a.now()[:19]+'Z</meta></metadata><manifest>'+''.join(items)+assets+'<item id="style" href="style.css" media-type="text/css"/><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/></manifest><spine>'+''.join(spine)+'</spine></package>'
