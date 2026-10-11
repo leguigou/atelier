@@ -359,7 +359,10 @@ def library(book_id=None):
         folders = [dict(r) for r in c.execute('SELECT * FROM folders ORDER BY name')]
         r = c.execute("SELECT payload FROM settings WHERE id='book'").fetchone()
     editorial_jobs=[public_editorial_job(j) for j in EDITORIAL_JOBS.values()]
-    return dict(sources=sources, ideas=ideas, folders=folders, assets=studio.assets(images_only=True), book=studio.book(book_id),books=studio.books(), settings={**settings(), 'has_key':bool(SECRET),'key_persistent':bool(VAULT_KEY),'authentication':bool(PASSWORD_HASH)}, jobs=list(JOBS.values()),editorial_jobs=editorial_jobs)
+    books=studio.books()
+    selected_id=book_id if any(b['id']==book_id for b in books) else None
+    book=studio.book(selected_id) if books else studio.normalize(dict(title='',chapters=[],_book_id='',research=dict(source_ids=[],idea_ids=[],folders=[],source_notes={},idea_notes={})))
+    return dict(sources=sources, ideas=ideas, folders=folders, assets=studio.assets(images_only=True), book=book,books=books, settings={**settings(), 'has_key':bool(SECRET),'key_persistent':bool(VAULT_KEY),'authentication':bool(PASSWORD_HASH)}, jobs=list(JOBS.values()),editorial_jobs=editorial_jobs)
 
 def compact_library(book_id=None):
     data=library(book_id)
@@ -944,6 +947,7 @@ class Handler(BaseHTTPRequestHandler):
                 from research import update
                 result=update(studio,required(data,'book_id'),data)
             elif route=='/api/book-create':result=studio.create_book(data)
+            elif route=='/api/book-duplicate':result=studio.duplicate_book(data)
             elif route=='/api/editorial':
                 if not SECRET:raise ValueError('Configurez votre clé API dans les paramètres.')
                 book_id=str(data.get('book_id',''))

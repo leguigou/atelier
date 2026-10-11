@@ -323,10 +323,10 @@ class ApiV1:
                 current=self.a.studio.book(bid); candidate={**current,**data,'_book_id':bid}
                 return handler.reply(self.a.studio.save_book(candidate,data.get('_label','API'))) or True
             if method == 'DELETE':
-                if bid == 'book-main': raise ValueError('Le projet principal ne peut pas être supprimé.')
                 with self.a.connect() as c:
                     c.execute('DELETE FROM book_versions WHERE book_id=?',(bid,))
                     if c.execute('DELETE FROM books WHERE id=?',(bid,)).rowcount!=1:raise ValueError('Projet introuvable.')
+                    if bid == 'book-main':c.execute("DELETE FROM settings WHERE id='book'")
                 return handler.reply({'deleted':True,'id':bid}) or True
         if tail == '/related' and method == 'GET': return handler.reply({'items':self.a.related()}) or True
         if tail == '/jobs' and method == 'GET': return handler.reply({'items':list(self.a.JOBS.values())}) or True

@@ -41,7 +41,7 @@ jeton API Atelier suffisent.
 | `ajouter_source` / `modifier_source` / `supprimer_source` | texte collé, correction, suppression (refusée si une idée s'appuie dessus) |
 | `importer_youtube` | vidéo : transcription récupérée en arrière-plan |
 | `ecrire_transcription` / `supprimer_transcription` / `rafraichir_transcription` | corriger, retirer ou relancer une transcription |
-| `creer_dossier` / `renommer_dossier` / `supprimer_dossier` | ranger la bibliothèque (le contenu du dossier survit à sa suppression) |
+| `creer_dossier` / `renommer_dossier` / `supprimer_dossier` | organiser les dossiers du livre avec `book_id` (obligatoire à la création) ; consulter `etat_bibliotheque(book_id)` pour leurs identifiants. Le contenu survit à la suppression. Sans `book_id`, renommage/suppression concernent les anciens dossiers communs. |
 | `synchroniser_bibliotheque` | importe le corpus local — n'écrase aucune source existante |
 
 ### Écrire et réviser le livre
@@ -49,7 +49,7 @@ jeton API Atelier suffisent.
 | Outil | Ce qu'il fait |
 |---|---|
 | `definir_intention` | brief du livre : à qui il parle, ce qu'il promet |
-| `ajouter_sources_livre` / `retirer_sources_livre` | rattache ou détache les sources du projet (onglet « Matière », 60 max) |
+| `ajouter_sources_livre` / `retirer_sources_livre` | rattache ou détache les sources du projet (onglet « Matière », sans limite de nombre) |
 | `creer_livre` / `supprimer_livre` | nouveau projet (`book-main` protégé) ; suppression **définitive** sur confirmation |
 | `ajouter_chapitre` / `ajouter_texte_chapitre` | plan, puis paragraphes sourcés |
 | `renommer_chapitre` / `deplacer_chapitre` / `supprimer_chapitre` | titre et objectif, ordre, retrait (confirmation si le chapitre contient du texte) |

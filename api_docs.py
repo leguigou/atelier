@@ -43,7 +43,7 @@ def openapi_document():
       '/api/v1/folders':{'get':op('Lister les dossiers'),'post':op('Créer un dossier','Corps : {"name":"…"}.',True,True)},
       '/api/v1/folders/{folder_id}':{'put':op('Renommer un dossier',body=True),'patch':op('Renommer un dossier',body=True),'delete':op('Supprimer un dossier','Le contenu est conservé et simplement déclassé.')},
       '/api/v1/books':{'get':op('Lister les projets de livre'),'post':op('Créer un projet de livre','Corps : title et, facultativement, author.',True,True)},
-      '/api/v1/books/{book_id}':{'get':op('Lire un livre'),'put':op('Enregistrer un livre',body=True),'patch':op('Modifier un livre','Fusionne les champs fournis et crée une version.',True),'delete':op('Supprimer un livre','Le livre principal book-main ne peut pas être supprimé.')},
+      '/api/v1/books/{book_id}':{'get':op('Lire un livre'),'put':op('Enregistrer un livre',body=True),'patch':op('Modifier un livre','Fusionne les champs fournis et crée une version.',True),'delete':op('Supprimer un livre','Supprime le livre et son historique. Les sources et idées communes sont conservées.')},
       '/api/v1/books/{book_id}/research':{
         'get':op('Lire la matière et les dossiers du livre','Retourne research et revision. Les originaux restent communs.'),
         'patch':op('Organiser la matière du livre','Fournir revision et action : add, remove, classify, notes, folder-create, folder-rename ou folder-delete. source_ids/idea_ids : 200 maximum. classify utilise folder_ids et mode add/remove/replace. notes utilise note ; création/renommage utilise name ; renommage/suppression utilise folder_id. Chaque opération crée une version. Une révision périmée renvoie 409.',True),

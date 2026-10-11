@@ -87,7 +87,7 @@ def _proposal(app, thread, name, args):
     specs={
       'propose_create_chapter':('create_chapter',{'title':str(args.get('title','')).strip()[:500],'purpose':str(args.get('purpose','')).strip()[:2500],'position':args.get('position')}),
       'propose_update_chapter':('update_chapter',{'chapter_id':str(args.get('chapter_id','')),'title':str(args.get('title','')).strip()[:500],'purpose':str(args.get('purpose','')).strip()[:2500]}),
-      'propose_append_to_chapter':('append_to_chapter',{'chapter_id':str(args.get('chapter_id','')),'text':str(args.get('text','')).strip()[:50000],'source_ids':list(dict.fromkeys(str(x) for x in args.get('source_ids',[])))[:60]}),
+      'propose_append_to_chapter':('append_to_chapter',{'chapter_id':str(args.get('chapter_id','')),'text':str(args.get('text','')).strip()[:50000],'source_ids':list(dict.fromkeys(str(x) for x in args.get('source_ids',[])))}),
       'propose_outline':('replace_outline',{'chapters':[dict(title=str(x.get('title','')).strip()[:500],purpose=str(x.get('purpose','')).strip()[:2500]) for x in args.get('chapters',[])[:40] if isinstance(x,dict)]}),
       'propose_tag_sources':('tag_sources',{'source_ids':list(dict.fromkeys(str(x) for x in args.get('source_ids',[])))[:200],'tags':[str(x).strip()[:80] for x in args.get('tags',[])[:50] if str(x).strip()],'mode':str(args.get('mode','add'))})}
     kind,payload=specs[name]
@@ -211,7 +211,7 @@ def apply_action(app, studio, thread_id, action_id, approve=True):
         if not chapter:raise ValueError('Chapitre introuvable.')
         source_ids=[]
         for sid in args.get('source_ids',[]):app.get_source(sid);source_ids.append(sid)
-        book['source_ids']=list(dict.fromkeys([*book.get('source_ids',[]),*source_ids]))[:60]
+        book['source_ids']=list(dict.fromkeys([*book.get('source_ids',[]),*source_ids]))
         chapter['blocks'].append(dict(id=app.uid(),type='text',text=app.required(args,'text',50000),source_ids=source_ids))
     elif kind=='replace_outline':
         book['chapters']=[dict(id=app.uid(),title=app.required(x,'title',500),purpose=str(x.get('purpose',''))[:2500],ideas=[],blocks=[]) for x in args['chapters']]

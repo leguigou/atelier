@@ -25,7 +25,7 @@ const ReaderAuthor=(()=>{
   }
   function pageShown(){
     if(!reading?.book_id)return;
-    selected=null;
+    clearSelection();
     try{localStorage.setItem(key(),JSON.stringify(anchor()))}catch{}
     $('#readerPassageHint').textContent='Touchez un passage ou sélectionnez du texte pour le modifier.';
     for(const id of ['readerEdit','readerNote','readerSources'])$('#'+id).disabled=true;
@@ -35,14 +35,39 @@ const ReaderAuthor=(()=>{
     $$('#pageContent .reading-selected').forEach(x=>x.classList.remove('reading-selected'));el.classList.add('reading-selected');
     $('#readerPassageHint').textContent='Passage sélectionné';
     for(const id of ['readerEdit','readerNote','readerSources'])$('#'+id).disabled=false;
+    const frame=$('#pageFrame'),rect=el.getBoundingClientRect(),base=frame.getBoundingClientRect();
+    const close=$('#clearReaderSelection');close.hidden=false;close.style.top=Math.max(4,rect.top-base.top-16)+'px';close.style.left=Math.min(frame.clientWidth-38,Math.max(4,rect.right-base.left-18))+'px';
+  }
+  function clearSelection(){
+    selected=null;window.getSelection()?.removeAllRanges();$$('#pageContent .reading-selected').forEach(el=>el.classList.remove('reading-selected'));
+    if($('#clearReaderSelection'))$('#clearReaderSelection').hidden=true;
+    if($('#readerPassageHint'))$('#readerPassageHint').textContent='Touchez un passage ou sélectionnez du texte pour le modifier.';
+    for(const id of ['readerEdit','readerNote','readerSources'])if($('#'+id))$('#'+id).disabled=true;
+  }
+  function searchBook(){
+    panel('Rechercher dans le livre',`<form id="readerSearchForm"><label>Mot ou expression<input id="readerBookQuery" type="search" placeholder="Rechercher dans tout le livre" autocomplete="off"></label><button type="submit">Rechercher</button></form><p id="readerSearchCount" role="status"></p><div id="readerSearchResults"></div>`);
+    $('#readerBookQuery').focus();
+    $('#readerSearchForm').onsubmit=e=>{e.preventDefault();const q=$('#readerBookQuery').value.trim(),needle=norm(q),results=[];if(!needle){$('#readerSearchResults').innerHTML='';$('#readerSearchCount').textContent='Saisissez un mot ou une expression.';return}
+      let total=0;
+      for(const ch of bookDraft.chapters)for(const b of ch.blocks||[]){const text=b.text||'',haystack=norm(text);let offset=0,index;
+        while((index=haystack.indexOf(needle,offset))!==-1){total++;if(results.length<100)results.push({chapter_id:ch.id,block_id:b.id,offset:index,title:ch.title,excerpt:text.slice(Math.max(0,index-65),index+needle.length+100)});offset=index+Math.max(1,needle.length)}
+      }
+      $('#readerSearchCount').textContent=total?`${total} résultat(s) dans le livre${total>100?' · 100 premiers affichés':''}`:'Aucun résultat dans le livre.';
+      $('#readerSearchResults').innerHTML=results.map((r,n)=>`<button data-reader-search-result="${n}"><strong>${esc(r.title)}</strong><span>${esc(r.excerpt)}</span></button>`).join('');
+      $$('[data-reader-search-result]').forEach(btn=>btn.onclick=()=>{const r=results[Number(btn.dataset.readerSearchResult)];pending=r;restore(r);closePanel(false);showPage();const passage=$$('#pageContent [data-read-block]').find(el=>el.dataset.readChapter===r.chapter_id&&el.dataset.readBlock===r.block_id&&Number(el.dataset.readEnd)>r.offset);if(passage){passage.classList.add('reading-search-match');passage.focus()}});
+    };
   }
   function install(signal){
     if(!reading?.book_id)return;
     $('#readingOverlay').classList.add('author-reader');
+    $('.reading-header').insertAdjacentHTML('beforeend',`<button id="readerBookSearch" aria-label="Rechercher dans le texte du livre" title="Rechercher dans le livre"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/></svg></button>`);
+    $('#readerBookSearch').onclick=searchBook;
+    $('#pageFrame').insertAdjacentHTML('beforeend','<button id="clearReaderSelection" class="reader-selection-close" aria-label="Fermer la sélection" title="Fermer la sélection" hidden>×</button>');
+    $('#clearReaderSelection').onpointerdown=e=>e.stopPropagation();$('#clearReaderSelection').onclick=e=>{e.stopPropagation();clearSelection()};
     $('.reading-header small').textContent='Lecture du livre · modifications et notes disponibles';
-    $('.reading-controls').insertAdjacentHTML('beforebegin',`<div class="reader-author-tools"><span id="readerPassageHint" role="status"></span><button id="readerSelect" aria-pressed="false">Sélectionner du texte</button><button id="readerEdit" disabled>Modifier</button><button id="readerNote" disabled>À revoir / Note</button><button id="readerSources" disabled>Sources</button><button id="readerReviews">Relire</button></div>`);
+    $('.reading-controls').insertAdjacentHTML('beforebegin',`<div class="reader-author-tools"><span id="readerPassageHint" role="status"></span><button id="readerSelect" aria-pressed="false" aria-label="Sélectionner du texte"><span class="reader-tool-full">Sélectionner du texte</span><span class="reader-tool-short" aria-hidden="true">Texte</span></button><button id="readerEdit" disabled>Modifier</button><button id="readerNote" aria-label="Ajouter une note de relecture" disabled><span class="reader-tool-full">À revoir / Note</span><span class="reader-tool-short" aria-hidden="true">Note</span></button><button id="readerSources" disabled>Sources</button><button id="readerReviews">Relire</button></div>`);
     $('#readerEdit').onclick=edit;$('#readerNote').onclick=note;$('#readerSources').onclick=sources;$('#readerReviews').onclick=reviews;
-    $('#readerSelect').onclick=e=>{const on=$('#readingOverlay').classList.toggle('reader-selecting');e.currentTarget.setAttribute('aria-pressed',String(on));e.currentTarget.textContent=on?'Reprendre les gestes':'Sélectionner du texte'};
+    $('#readerSelect').onclick=e=>{const on=$('#readingOverlay').classList.toggle('reader-selecting');e.currentTarget.setAttribute('aria-pressed',String(on));e.currentTarget.setAttribute('aria-label',on?'Reprendre les gestes':'Sélectionner du texte');e.currentTarget.innerHTML=on?'<span class="reader-tool-full">Reprendre les gestes</span><span class="reader-tool-short" aria-hidden="true">Gestes</span>':'<span class="reader-tool-full">Sélectionner du texte</span><span class="reader-tool-short" aria-hidden="true">Texte</span>'};
     $('#pageContent').addEventListener('click',e=>choose(e.target.closest('[data-read-block]')),{signal});
     $('#pageContent').addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.matches('[data-read-block]')){e.preventDefault();choose(e.target);$('#readerEdit').focus()}},{signal});
     document.addEventListener('selectionchange',()=>{const selection=window.getSelection();if(!selection?.isCollapsed){const node=selection.anchorNode?.parentElement,el=node?.closest('#pageContent [data-read-block]');if(el)choose(el)}},{signal});
@@ -62,7 +87,7 @@ const ReaderAuthor=(()=>{
     if(panelFocus?.isConnected&&!panelFocus.disabled)panelFocus.focus();else $('#readerReviews')?.focus();
     if(edited&&reading&&repaginate){updateReading();paginate()}
   }
-  function escape(){if($('#readerPanel')){closePanel();return true}return false}
+  function escape(){if($('#readerPanel')){closePanel();return true}if(selected){clearSelection();return true}return false}
   function find(target=selected){const ch=bookDraft?.chapters.find(c=>c.id===target?.chapter_id);return {ch,block:ch?.blocks.find(b=>b.id===target?.block_id)}}
   async function save(){
     try{await cacheLocalDraft();await persistDraft();if($('#readerPanelStatus'))$('#readerPanelStatus').textContent='Enregistré dans le livre et son historique.';return true}
@@ -128,14 +153,18 @@ const renderAuthorBook=renderBook;
 renderBook=function(){
   renderAuthorBook();
   const commands=$('.book-command');if(!commands)return;
+  $('.heading h1').textContent='Manuscrit';
+  $('.heading .primary')?.classList.remove('primary');
+  const preparation=$('.editorial-home');
+  if(preparation&&bookDraft.chapters.length){const details=document.createElement('details');details.className='writer-preparation';details.innerHTML='<summary>Intention, sources et accompagnement du livre</summary>';$('.writer-layout').after(details);details.append(preparation)}
   commands.insertAdjacentHTML('afterend','<nav class="book-modes" aria-label="Modes du livre"><button aria-current="page" id="modeWrite">Écrire</button><button id="modeRead">Lire</button><button id="modeReview">Relire</button></nav>');
   $('#modeWrite').onclick=()=>$('#chapterTitle')?.focus();$('#modeRead').onclick=()=>$('#readBook').click();
   $('#modeReview').onclick=()=>run(async()=>{await $('#readBook').onclick();if(reading?.book_id)ReaderAuthor.reviews()});
   const actions=document.createElement('section');actions.className='book-access-actions';actions.setAttribute('aria-label','Téléchargement et présentation du livre');
   actions.innerHTML='<div><strong>Votre livre</strong><span>Couverture, illustrations et fichier à emporter</span></div><div class="book-access-buttons"></div>';
-  $('.heading').after(actions);
+  $('.writer-layout').after(actions);
   for(const id of ['exportOptions','bookCovers','mediaLibrary'])actions.lastElementChild.append($('#'+id));
-  $('#exportOptions').classList.add('primary');$('#exportOptions').innerHTML=uiIcon('↓')+' Télécharger le livre';
+  $('#exportOptions').classList.remove('primary');$('#exportOptions').innerHTML=uiIcon('↓')+' Télécharger le livre';
   $('#bookCovers').textContent=bookDraft.covers?.front?'Modifier la couverture':'Ajouter une couverture';
   $('#bookCovers').onclick=()=>bookDraft.covers?.front?coverModal():coverPickerModal('front');
   $('#mediaLibrary').textContent='Images et schémas';

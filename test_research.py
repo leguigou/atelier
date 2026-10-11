@@ -20,6 +20,29 @@ class ResearchTests(unittest.TestCase):
         i=app.save_idea(dict(title='Une idée',refs=[dict(source_id=s['id'],start=0,end=0)]))
         return s,i
 
+    def test_mcp_folder_lifecycle_targets_book_and_rejects_missing_book(self):
+        from test_mcp_sources import mcp
+        from unittest.mock import patch
+        a=self.s.create_book({'title':'Livre A'});b=self.s.create_book({'title':'Livre B'})
+        class Handler:
+            def reply(self,value,*args,**kwargs):self.value=value
+        def api_call(method,path,query=None,body=None):
+            from urllib.parse import urlencode
+            h=Handler()
+            self.assertTrue(app.api_v1.handle(h,method,path,urlencode(query or {}),body or {}))
+            return h.value
+        with patch.object(mcp.api,'call',side_effect=api_call):
+            with self.assertRaises(mcp.ApiError):mcp.creer_dossier({'name':'Sans livre'})
+            f=mcp.creer_dossier({'book_id':a['_book_id'],'name':'Marketing'})
+            self.assertEqual(f['book_id'],a['_book_id'])
+            self.assertEqual(api_call('GET','/api/v1/folders',{'book_id':a['_book_id']})['items'][0]['id'],f['id'])
+            self.assertEqual(self.s.book(b['_book_id'])['research']['folders'],[])
+            self.assertEqual(api_call('GET','/api/v1/folders')['items'],[])
+            mcp.renommer_dossier({'book_id':a['_book_id'],'folder_id':f['id'],'name':'Vente'})
+            self.assertEqual(self.s.book(a['_book_id'])['research']['folders'][0]['name'],'Vente')
+            mcp.supprimer_dossier({'book_id':a['_book_id'],'folder_id':f['id']})
+            self.assertEqual(self.s.book(a['_book_id'])['research']['folders'],[])
+
     def test_visual_library_keeps_previews_and_book_memberships(self):
         s=self.s.upload(fixtures.StudioTests.image(self),'photo.png','Photo commune')
         i=app.save_idea(dict(title='Idée illustrée',refs=[dict(source_id=s['id'],start=0,end=0)]))
@@ -57,6 +80,36 @@ class ResearchTests(unittest.TestCase):
         with self.assertRaises(Conflict):self.change(b,action='add',source_ids=[s['id']])
         self.assertEqual(saved,self.s.book(b['_book_id']))
         with self.assertRaises(ValueError):self.change(saved,action='classify',source_ids=[s['id']],folder_ids=['missing'])
+
+    def test_delete_book_preserves_shared_material_and_other_books(self):
+        s,i=self.sample();a=self.s.create_book({'title':'Livre à supprimer'});b=self.s.create_book({'title':'Livre conservé'})
+        a=self.change(a,action='add',source_ids=[s['id']],idea_ids=[i['id']])
+        b=self.change(b,action='add',source_ids=[s['id']],idea_ids=[i['id']])
+        before=app.compact_library()
+        class Handler:
+            def reply(self,value,*args,**kwargs):self.value=value
+        h=Handler()
+        self.assertTrue(app.api_v1.handle(h,'DELETE','/api/v1/books/'+a['_book_id'],''))
+        self.assertTrue(h.value['deleted'])
+        after=app.compact_library()
+        self.assertEqual(before['sources'],after['sources'])
+        self.assertEqual(before['ideas'],after['ideas'])
+        self.assertEqual(b,self.s.book(b['_book_id']))
+        self.assertNotIn(a['_book_id'],[book['id'] for book in after['books']])
+        with app.connect() as c:
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM book_versions WHERE book_id=?',(a['_book_id'],)).fetchone()[0],0)
+        self.assertTrue(app.api_v1.handle(h,'DELETE','/api/v1/books/book-main',''))
+        self.assertEqual(self.s.book(),b)
+        self.assertEqual(app.library('book-main')['book'],b)
+        self.assertTrue(app.api_v1.handle(h,'DELETE','/api/v1/books/'+b['_book_id'],''))
+        self.assertEqual(app.library()['books'],[])
+        self.assertEqual(app.library()['book']['_book_id'],'')
+        self.s.migrate()
+        self.assertEqual(self.s.books(),[])
+        self.assertEqual(before['sources'],app.compact_library()['sources'])
+        self.assertEqual(before['ideas'],app.compact_library()['ideas'])
+        created=self.s.create_book({'title':'Nouveau départ'})
+        self.assertEqual(self.s.book(),created)
 
     def test_folder_modes_unfiled_sort_and_api_dispatch(self):
         s,i=self.sample();b=self.s.create_book({'title':'Livre'})

@@ -26,15 +26,24 @@ const assert=require('node:assert/strict');
       await card.locator('.cover img').waitFor();await page.waitForFunction(id=>{const im=document.querySelector(`[data-link-source="${id}"]`)?.closest('.source-card').querySelector('.cover img');return im?.complete&&im.naturalWidth>0},photo.id);
       await card.locator('[data-link-source]').click();
       for(const id of [a._book_id,b._book_id])await page.locator('[name=book_ids][value="'+id+'"]').check();
+      await page.locator('[data-new-link-folder="'+a._book_id+'"]').fill('Relations');await page.locator('[data-new-link-folder="'+b._book_id+'"]').fill('Introduction');
       await page.locator('#linkBooksForm button[type=submit]').click();await page.locator('#modal').waitFor({state:'hidden'});
       for(const title of [a.title,b.title])await card.locator('.linked-book-badges').getByText(title,{exact:true}).waitFor();
       for(const id of [a._book_id,b._book_id])assert((await (await context.request.get(base+'/api/book?book_id='+id)).json()).research.source_ids.includes(photo.id));
+      const linkedA=await (await context.request.get(base+'/api/book?book_id='+a._book_id)).json(),linkedB=await (await context.request.get(base+'/api/book?book_id='+b._book_id)).json();assert(linkedA.research.folders.find(f=>f.name==='Relations').source_ids.includes(photo.id));assert(linkedB.research.folders.find(f=>f.name==='Introduction').source_ids.includes(photo.id));
+      await page.locator('#sharedBookFilter').selectOption(b._book_id);await page.locator('#saveLibraryView').click();await page.locator('#saveLibraryViewForm [name=name]').fill('Sources de mon livre');await page.locator('#saveLibraryViewForm button[type=submit]').click();await page.locator('#modal').waitFor({state:'hidden'});
+      const savedViewId=await page.evaluate(()=>JSON.parse(localStorage.getItem('atelier-library-views')).at(-1).id);await page.reload();await page.locator(width<760?'[data-mobile-nav=common]':'[data-nav=common]').click();await page.locator('#librarySavedView').selectOption(savedViewId);assert.equal(await page.locator('#sharedBookFilter').inputValue(),b._book_id);await page.locator('#resetCollectionFilters').click();await page.locator('#sort').selectOption('added');
       // Reader exposes the same multi-book action.
       await card.getByRole('button',{name:'Ouvrir la source',exact:true}).click();await page.locator('#readerLinkBooks').click();await page.locator('#linkBooksForm').waitFor();
-      assert(await page.locator('[name=book_ids][value="'+a._book_id+'"]').isChecked());await page.locator('#modal [data-close]').click();
+      assert(await page.locator('[name=book_ids][value="'+a._book_id+'"]').isChecked());
+      const folderA=linkedA.research.folders.find(f=>f.name==='Relations').id;await page.locator('[data-link-folder="'+folderA+'"]').uncheck();await page.locator('#linkBooksForm button[type=submit]').click();await page.locator('#modal').waitFor({state:'hidden'});
+      const unfiledA=await (await context.request.get(base+'/api/book?book_id='+a._book_id)).json();assert(unfiledA.research.source_ids.includes(photo.id));assert(!unfiledA.research.folders.find(f=>f.id===folderA).source_ids.includes(photo.id));
+      await page.locator('#readerLinkBooks').click();await page.locator('[data-link-folder="'+folderA+'"]').check();await page.locator('#linkBooksForm button[type=submit]').click();await page.locator('#modal').waitFor({state:'hidden'});
+      assert((await (await context.request.get(base+'/api/book?book_id='+a._book_id)).json()).research.folders.find(f=>f.id===folderA).source_ids.includes(photo.id));
       await page.locator('#back').click();await page.locator('[data-common-section=ideas]').click();
+      await page.locator('#librarySavedView').selectOption('preset:verify');await page.locator('#resetCollectionFilters').click();
       const icard=page.locator('.idea-card').filter({has:page.locator('[data-link-idea="'+idea.id+'"]')});
-      await icard.locator('.shared-idea-preview img').waitFor();await icard.getByRole('button',{name:'Ouvrir l’idée',exact:true}).click();
+      assert.equal(await icard.locator('img,.shared-idea-preview').count(),0);assert.equal(await icard.locator('h3').innerText(),'Une idée visuelle '+width);assert.equal(await page.locator('.compact-idea-list').evaluate(e=>getComputedStyle(e).gridTemplateColumns.split(' ').length),1);await icard.getByRole('button',{name:'Ouvrir l’idée',exact:true}).click();
       await page.locator('#modal').getByText('Le contexte complet de cette idée.',{exact:true}).waitFor();await page.locator('#modal').getByText('Le passage conservé.',{exact:true}).waitFor();
       await page.locator('#modal [data-close]').click();
       // Bulk association preserves partial links unless the user changes that book.

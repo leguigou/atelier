@@ -80,7 +80,7 @@ def prepare(studio, data):
     # Bound provider input and distribute excerpts across every selected source.
     evidence, omissions = [], []
     sources = _source_cache(app, ids)
-    budget = max(800, 60000 // len(ids))
+    budget = 60000 // len(ids)
     terms = set(app.tokens(' '.join([book['title'], brief.get('intention',''), chapter['title'] if chapter else '', (chapter or {}).get('purpose',''), data.get('instruction','')])))
     for sid in ids:
         s = sources.get(sid)

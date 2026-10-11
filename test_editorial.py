@@ -20,6 +20,21 @@ class EditorialTests(unittest.TestCase):
         other=self.s.create_book({'title':'Autre'});self.assertNotIn('source_ids',other)
         paths={x['path'] for x in self.s.version(b['_revision'])['changes']};self.assertTrue({'brief','source_ids'}<=paths)
 
+    def test_more_than_sixty_sources_are_saved_and_used_with_bounded_excerpts(self):
+        from research import update
+        ids=[self.s.make_source('Source '+str(i),'Auteur','Document',
+             [dict(text='Un passage utile. '*200,start=0,duration=0)])['id'] for i in range(100)]
+        b=self.s.create_book({'title':'Livre aux cent sources'})
+        b=update(self.s,b['_book_id'],dict(revision=b['_revision'],action='add',source_ids=ids))
+        b['source_ids']=ids;b['brief']={'intention':'Écrire un livre utile'}
+        b=self.s.save_book(b)
+        self.assertEqual(self.s.book(b['_book_id'])['source_ids'],ids)
+        self.assertEqual(self.s.book(b['_book_id'])['research']['source_ids'],ids)
+        prepared=prepare(self.s,dict(book_id=b['_book_id'],mode='plan'))
+        evidence=prepared[3]
+        self.assertEqual({e['source_id'] for e in evidence},set(ids))
+        self.assertLessEqual(sum(len(e['text']) for e in evidence),60000)
+
     def test_editorial_proposals_are_grounded_and_do_not_mutate_book(self):
         b,s=self.configured();before=self.s.book()
         result={'paragraphs':[{'text':'Commencer par écouter son lecteur.','evidence_ids':['E1']}],'questions':['Interroger plusieurs lecteurs.']}

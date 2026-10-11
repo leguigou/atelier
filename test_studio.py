@@ -24,6 +24,32 @@ class StudioTests(unittest.TestCase):
         self.assertEqual(len(self.s.history(first['_book_id'])),2)
         self.assertEqual(len(self.s.history(second['_book_id'])),2)
         self.assertNotEqual(self.s.history(first['_book_id'])[0]['id'],self.s.history(second['_book_id'])[0]['id'])
+    def test_duplicate_preserves_content_with_independent_history(self):
+        original=self.text_book()
+        original['review_notes']=[dict(id='note1',chapter_id='chapter1',block_id='block1',text='À préciser',offset=0)]
+        asset=self.s.store_asset(self.image(),'cover.png')['id']
+        original['covers']={'front':asset,'back':'','front_variants':[asset],'back_variants':[]}
+        original['research']['folders']=[dict(id='folder-copy',name='Un thème',source_ids=[],idea_ids=[])]
+        original['research']['source_notes']={'source1':'Note de travail'}
+        original['editorial_proposal']=dict(book_id=original['_book_id'],revision=original['_revision'],chapter_id='chapter1')
+        original=self.s.save_book(original)
+        before=self.s.history(original['_book_id'])
+        copy=self.s.duplicate_book({'book_id':original['_book_id']})
+        self.assertNotEqual(copy['_book_id'],original['_book_id'])
+        self.assertNotEqual(copy['_revision'],original['_revision'])
+        self.assertEqual(copy['title'],original['title']+' — copie')
+        for key in ('chapters','covers','research','review_notes'):
+            self.assertEqual(copy[key],original[key])
+        self.assertEqual(copy['editorial_proposal']['book_id'],copy['_book_id'])
+        self.assertEqual(copy['editorial_proposal']['revision'],copy['_revision'])
+        self.assertEqual(self.s.history(original['_book_id']),before)
+        self.assertEqual(len(self.s.history(copy['_book_id'])),1)
+        copy['chapters'][0]['blocks'][0]['text']='Texte de la copie'
+        copy['research']['folders'][0]['name']='Autre thème'
+        self.s.save_book(copy)
+        self.assertEqual(self.s.book(original['_book_id']),original)
+        self.assertEqual(len(self.s.history(copy['_book_id'])),2)
+        with self.assertRaises(ValueError):self.s.duplicate_book({'book_id':'missing'})
     def test_versions_diff_restore_and_stale_conflict(self):
         one=self.text_book();old=json.loads(json.dumps(one));two=json.loads(json.dumps(one));two['chapters'][0]['blocks'][0]['text']='Premier paragraphe enrichi';two=self.s.save_book(two)
         changes=self.s.version(two['_revision'])['changes'];textchange=next(c for c in changes if c.get('block_id')=='block1')

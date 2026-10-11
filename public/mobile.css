@@ -16,7 +16,7 @@
 .ui-icon{width:19px;height:19px;display:inline-block;vertical-align:middle;flex:none;pointer-events:none}
 button>.ui-icon,a>.ui-icon{margin-right:7px}button>.ui-icon:only-child,a>.ui-icon:only-child{margin:0}
 .nav .icon{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px}.nav .ui-icon{width:21px;height:21px}
-.mobile-nav button>span{display:flex;align-items:center;justify-content:center;width:40px;height:30px;border-radius:10px;transition:background .15s}.mobile-nav .ui-icon{width:22px;height:22px}.mobile-nav button.active>span{background:#dde8dc}.mobile-nav button.active .ui-icon{stroke-width:2}
+.mobile-nav button{grid-template-columns:minmax(0,1fr);grid-template-rows:22px auto;align-content:center;text-align:center}.mobile-nav button small{display:block;line-height:1.2;text-align:center}.mobile-nav button>span{display:flex;align-items:center;justify-content:center;width:40px;height:30px;border-radius:10px;transition:background .15s}.mobile-nav button>.ui-icon{width:22px;height:22px;margin:0;display:block}.mobile-nav button.active>span{background:#dde8dc}.mobile-nav button.active .ui-icon{stroke-width:2}
 .brand-mark{display:inline-flex;align-items:center;justify-content:center}.brand-mark .ui-icon{width:25px;height:25px}.heart .ui-icon{width:19px;height:19px}.heart.liked .ui-icon{fill:currentColor}
 .folder-icon .ui-icon{width:30px;height:30px}.book-empty-icon .ui-icon{width:44px;height:44px}.document-cover>.ui-icon{width:52px;height:52px;opacity:.6}.setting-head h2 .ui-icon{width:23px;height:23px}.upload-zone>.ui-icon{width:30px;height:30px}.tabs button>.ui-icon{width:17px;height:17px}
 

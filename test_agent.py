@@ -18,6 +18,19 @@ class AgentTests(unittest.TestCase):
         read=agent.execute_tool(app,self.s,{'book_id':'book-main'},'read_source',{'source_id':source['id'],'query':'clients'})
         self.assertIn('dix clients',read['passages'][0]['text'])
 
+    def test_append_preserves_more_than_sixty_book_sources(self):
+        ids=[self.s.make_source('Source '+str(i),'Auteur','Document',[])['id'] for i in range(65)]
+        b=self.s.book();b['source_ids']=ids[:60]
+        b['chapters']=[dict(id='chapter1',title='Chapitre',ideas=[],blocks=[])]
+        self.s.save_book(b)
+        thread=agent.create_thread(app,self.s,{'book_id':b['_book_id']})
+        result=agent.execute_tool(app,self.s,thread,'propose_append_to_chapter',
+                                 dict(chapter_id='chapter1',text='Texte sourcé.',source_ids=ids))
+        agent.save_thread(app,thread)
+        applied=agent.apply_action(app,self.s,thread['id'],result['action_id'],True)
+        self.assertEqual(applied['book']['source_ids'],ids)
+        self.assertEqual(applied['book']['chapters'][0]['blocks'][0]['source_ids'],ids)
+
     def test_write_action_requires_confirmation_and_versions_book(self):
         thread=agent.create_thread(app,self.s,{'book_id':'book-main'})
         result=agent.execute_tool(app,self.s,thread,'propose_create_chapter',{'title':'Comprendre son audience','purpose':'Partir du terrain'})

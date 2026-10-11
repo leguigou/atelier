@@ -15,7 +15,7 @@ const path = require('node:path');
         const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
         const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
         const assetUrl=id=>id;
-        let reading=null,readingIndex=0,readingFont=17,readingAbort=null,readingResize=null;
+        let view='book',reading=null,readingIndex=0,readingFont=17,readingAbort=null,readingResize=null;
         ${source.slice(source.indexOf('async function openPages('),source.indexOf('\naddToBookModal='))}
         window.testReader={open:()=>openPages({title:'Livre test',book:true,sections:[{title:'Second chapitre',blocks:[{type:'text',text:'Introduction du second chapitre. '.repeat(20)}]},{title:'Dernier chapitre',blocks:[{type:'text',text:'Un texte suffisamment long pour vérifier la pagination et les gestes. '.repeat(250)}]}]}), index:()=>readingIndex, count:()=>pageList.length};
       `});

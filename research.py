@@ -13,7 +13,7 @@ def validate(app, value):
     if not isinstance(value, dict): raise ValueError('Matière du livre invalide.')
     for key, table in [('source_ids', 'sources'), ('idea_ids', 'ideas')]:
         ids = value.get(key, [])
-        if not isinstance(ids, list) or len(ids) > 10000 or any(not isinstance(x, str) for x in ids) or len(set(ids)) != len(ids):
+        if not isinstance(ids, list) or (key == 'idea_ids' and len(ids) > 10000) or any(not isinstance(x, str) for x in ids) or len(set(ids)) != len(ids):
             raise ValueError('Liste de matière invalide.')
         # Deleted shared items may remain in historical books; API additions are checked separately.
     folders = value.get('folders', [])

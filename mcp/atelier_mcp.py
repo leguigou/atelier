@@ -255,7 +255,7 @@ api = Atelier()
 
 # --------------------------------------------------------------------------- lecture
 
-def etat_bibliotheque(_=None):
+def etat_bibliotheque(args=None):
     out = {}
     total = api.call("GET", "/api/v1/sources", {"limit": 1})
     out["sources"] = total.get("total", 0)
@@ -269,7 +269,11 @@ def etat_bibliotheque(_=None):
         "GET", "/api/v1/ideas", {"limit": 1, "archived": "true"}
     ).get("total", 0)
     out["idees_visibles"] = out["idees"] - out["idees_archivees"]
-    out["dossiers"] = [f["name"] for f in api.call("GET", "/api/v1/folders").get("items", [])]
+    book_id = str((args or {}).get("book_id") or "").strip()
+    folders = api.call("GET", "/api/v1/folders", {"book_id": book_id} if book_id else None).get("items", [])
+    out["dossiers"] = [f["name"] for f in folders]
+    out["dossiers_details"] = [dict(id=f["id"], name=f["name"]) for f in folders]
+    if book_id: out["book_id"] = book_id
     books = api.call("GET", "/api/v1/books").get("items", [])
     out["livres"] = [dict(id=b["id"], titre=b["title"], chapitres=b["chapters"]) for b in books]
     tags = api.call("GET", "/api/v1/tags").get("items", [])
@@ -732,10 +736,10 @@ def matieres_livre(args):
                     auteur=source.get("author", ""),
                     transcription=bool(source.get("segment_count")))
 
-    return dict(livre=book.get("title", ""), book_id=book_id, maximum=60,
+    return dict(livre=book.get("title", ""), book_id=book_id, maximum=None,
                 matieres=[fiche(sid) for sid in declarees],
                 citees_sans_matiere=[fiche(sid) for sid in manquantes],
-                place_restante=max(0, 60 - len(declarees)),
+                place_restante=None,
                 suite=("Ces sources sont citées dans le manuscrit sans nourrir le projet : rattachez-les avec "
                        "ajouter_sources_livre, sinon l'accompagnement éditorial travaille sans elles."
                        if manquantes else ""))
@@ -754,14 +758,10 @@ def _matieres_ecrire(book_id, ids, retirer=False):
         restantes = actuelles + nouvelles
         touchees = nouvelles
         inutiles = [sid for sid in ids if sid in actuelles]
-    if len(restantes) > 60:
-        raise ApiError("Un livre accepte 60 sources au maximum : %d déjà rattachées, %d nouvelles, %d en trop. "
-                       "Retirez d'abord des sources (retirer_sources_livre) ou rattachez-en moins."
-                       % (len(actuelles), len(restantes) - len(actuelles), len(restantes) - 60))
     if not touchees:
         return None, dict(livre=book.get("title", ""), book_id=book_id, matieres=actuelles,
                           modifiees=[], deja_a_jour=inutiles, total=len(actuelles),
-                          place_restante=60 - len(actuelles))
+                          place_restante=None)
     maj = api.call("PATCH", "/api/v1/books/%s" % book_id,
                    body={"_revision": book.get("_revision"), "source_ids": restantes})
     return maj, None
@@ -786,7 +786,7 @@ def ajouter_sources_livre(args):
     matieres = [str(x) for x in (maj.get("source_ids") or [])]
     return dict(livre=maj.get("title", ""), book_id=book_id, matieres=matieres,
                 ajoutees=[sid for sid in ids if sid in matieres],
-                total=len(matieres), place_restante=60 - len(matieres))
+                total=len(matieres), place_restante=None)
 
 
 def retirer_sources_livre(args):
@@ -803,7 +803,7 @@ def retirer_sources_livre(args):
     matieres = [str(x) for x in (maj.get("source_ids") or [])]
     return dict(livre=maj.get("title", ""), book_id=book_id, matieres=matieres,
                 retirees=[sid for sid in ids if sid not in matieres],
-                total=len(matieres), place_restante=60 - len(matieres))
+                total=len(matieres), place_restante=None)
 
 
 def exporter_livre(args):
@@ -892,7 +892,17 @@ def creer_dossier(args):
     name = str(args.get("name") or "").strip()
     if not name:
         raise ApiError("name requis.")
-    return api.call("POST", "/api/v1/folders", body={"name": name})
+    book_id = str(args.get("book_id") or "").strip()
+    if not book_id:
+        raise ApiError("book_id requis : choisissez le livre avec etat_bibliotheque.")
+    saved = _modifier_dossier_livre(book_id, "folder-create", name=name)
+    return dict(saved["research"]["folders"][-1], book_id=book_id)
+
+
+def _modifier_dossier_livre(book_id, action, **fields):
+    book = api.call("GET", "/api/v1/books/%s" % book_id)
+    return api.call("PATCH", "/api/v1/books/%s/research" % book_id,
+                    body=dict(revision=book["_revision"], action=action, **fields))
 
 
 def definir_intention(args):
@@ -944,7 +954,7 @@ def ajouter_texte_chapitre(args):
     text = str(args.get("text") or "").strip()
     if not chapter_id or not text:
         raise ApiError("chapter_id et text sont requis.")
-    source_ids = [str(x) for x in (args.get("source_ids") or [])][:60]
+    source_ids = [str(x) for x in (args.get("source_ids") or [])]
 
     def mutate(chapters):
         chapter = next((c for c in chapters if c.get("id") == chapter_id), None)
@@ -1040,7 +1050,7 @@ def remplacer_texte_chapitre(args):
     chapter_id = str(args.get("chapter_id") or "").strip()
     if not chapter_id:
         raise ApiError("chapter_id requis.")
-    source_ids = [str(x) for x in (args.get("source_ids") or [])][:60]
+    source_ids = [str(x) for x in (args.get("source_ids") or [])]
     paragraphs = args.get("paragraphs")
     if isinstance(paragraphs, str):
         paragraphs = [paragraphs]
@@ -1236,7 +1246,11 @@ def renommer_dossier(args):
     name = str(args.get("name") or "").strip()
     if not fid or not name:
         raise ApiError("folder_id et name sont requis.")
-    out = api.call("PATCH", "/api/v1/folders/%s" % fid, body={"name": name[:150]})
+    if args.get("book_id"):
+        saved = _modifier_dossier_livre(str(args["book_id"]), "folder-rename", folder_id=fid, name=name[:150])
+        out = next(f for f in saved["research"]["folders"] if f["id"] == fid)
+    else:
+        out = api.call("PATCH", "/api/v1/folders/%s" % fid, body={"name": name[:150]})
     return dict(dossier=out.get("name", name), folder_id=fid)
 
 
@@ -1246,7 +1260,10 @@ def supprimer_dossier(args):
     fid = str(args.get("folder_id") or "").strip()
     if not fid:
         raise ApiError("folder_id requis — retrouvez-les avec etat_bibliotheque.")
-    api.call("DELETE", "/api/v1/folders/%s" % fid)
+    if args.get("book_id"):
+        _modifier_dossier_livre(str(args["book_id"]), "folder-delete", folder_id=fid)
+    else:
+        api.call("DELETE", "/api/v1/folders/%s" % fid)
     return dict(folder_id=fid, supprime=True,
                 note="Le dossier est retiré, son contenu reste dans la bibliothèque, sans dossier.")
 
@@ -1631,8 +1648,8 @@ def definir_couverture_livre(args):
 TOOLS = [
     dict(name="etat_bibliotheque",
          description="Vue d'ensemble de l'Atelier : nombre de sources et de transcriptions, "
-                     "idées totales/archivées, dossiers, livres, tags principaux, travaux IA en cours.",
-         inputSchema={"type": "object", "properties": {}, "additionalProperties": False},
+                     "idées totales/archivées, dossiers, livres, tags principaux, travaux IA en cours. Fournir book_id pour les dossiers du livre et leurs identifiants.",
+         inputSchema={"type": "object", "properties": {"book_id": {"type": "string"}}, "additionalProperties": False},
          handler=etat_bibliotheque),
     dict(name="chercher_sources",
          description="Chercher des sources (vidéos, documents) dans l'Atelier par mots-clés, "
@@ -1776,9 +1793,9 @@ TOOLS = [
              "required": ["title", "refs"], "additionalProperties": False},
          handler=creer_idee),
     dict(name="creer_dossier",
-         description="Créer un dossier pour regrouper sources et idées autour d'un sujet.",
-         inputSchema={"type": "object", "properties": {"name": {"type": "string"}},
-                      "required": ["name"], "additionalProperties": False},
+         description="Créer un dossier visible dans le livre choisi. book_id obligatoire : consulter etat_bibliotheque pour choisir le livre.",
+         inputSchema={"type": "object", "properties": {"name": {"type": "string"}, "book_id": {"type": "string"}},
+                      "required": ["name", "book_id"], "additionalProperties": False},
          handler=creer_dossier),
     dict(name="definir_intention",
          description="Renseigner l'intention du livre (brief) : ce que le livre doit transmettre, "
@@ -1920,15 +1937,15 @@ TOOLS = [
              "required": ["idea_id"], "additionalProperties": False},
          handler=supprimer_idee),
     dict(name="renommer_dossier",
-         description="Renommer un dossier. Les sources et idées rangées dedans ne bougent pas.",
+         description="Renommer un dossier. Fournir book_id pour un dossier du livre ; sans book_id, ancien dossier commun.",
          inputSchema={"type": "object", "properties": {
-             "folder_id": {"type": "string"}, "name": {"type": "string"}},
+             "folder_id": {"type": "string"}, "name": {"type": "string"}, "book_id": {"type": "string"}},
              "required": ["folder_id", "name"], "additionalProperties": False},
          handler=renommer_dossier),
     dict(name="supprimer_dossier",
          description="Supprimer un dossier. Les sources et idées qu'il contenait sont détachées, "
-                     "jamais supprimées.",
-         inputSchema={"type": "object", "properties": {"folder_id": {"type": "string"}},
+                     "jamais supprimées. Fournir book_id pour un dossier du livre ; sans book_id, ancien dossier commun.",
+         inputSchema={"type": "object", "properties": {"folder_id": {"type": "string"}, "book_id": {"type": "string"}},
              "required": ["folder_id"], "additionalProperties": False},
          handler=supprimer_dossier),
     dict(name="analyser_sources",
@@ -1961,7 +1978,7 @@ TOOLS = [
          handler=matieres_livre),
     dict(name="ajouter_sources_livre",
          description="Rattacher des sources de la bibliothèque aux matières d'un projet de livre : c'est ce qui "
-                     "alimente l'accompagnement éditorial. 60 sources maximum par livre ; les sources déjà "
+                     "alimente l'accompagnement éditorial. Sans limite de nombre par livre ; les sources déjà "
                      "rattachées sont ignorées. Identifiants obtenus avec chercher_sources ou matieres_livre.",
          inputSchema={"type": "object", "properties": {
              "book_id": {"type": "string", "description": "Identifiant du livre (défaut book-main)."},

@@ -2,7 +2,7 @@
 let agentThreadId='';try{agentThreadId=localStorage.getItem('atelier-agent-thread')||''}catch{}
 let agentThread=null,agentBusy=false;
 const shellWithAgent=shell;
-shell=function(content){shellWithAgent(content);$('#agentLauncher')?.remove();const button=document.createElement('button');button.id='agentLauncher';button.className='agent-launcher';button.innerHTML='<span>✦</span> Assistant IA';button.onclick=openAgent;document.body.append(button)};
+shell=function(content){shellWithAgent(content);$('#agentLauncher')?.remove();const button=document.createElement('button');button.id='agentLauncher';button.className='agent-launcher';button.setAttribute('aria-label','Ouvrir l’assistant IA');button.innerHTML='<span aria-hidden="true">✦</span><span class="agent-label">Assistant IA</span><span class="agent-short" aria-hidden="true">IA</span>';button.onclick=openAgent;document.body.append(button)};
 
 function agentContext(){return {book_id:typeof activeBookId==='string'?activeBookId:'book-main',source_id:view==='reader'&&current?current.id:''}}
 function closeAgent(){$('#agentPanel')?.remove();$('#agentLauncher')?.classList.remove('open')}

@@ -61,11 +61,12 @@ class Studio:
             book=json.loads(row[0]) if row else {'title':'Mon livre','chapters':[]}
             book=self.normalize(book)
             book['_book_id']='book-main'
-            if not c.execute('SELECT 1 FROM books LIMIT 1').fetchone():
+            if not c.execute('SELECT 1 FROM books LIMIT 1').fetchone() and not c.execute("SELECT 1 FROM settings WHERE id='books-initialized'").fetchone():
                 book['_revision']=self.a.uid()
                 c.execute('INSERT INTO book_versions(id,created,label,payload,changes,book_id) VALUES(?,?,?,?,?,?)',(book['_revision'],self.a.now(),'Point de départ',self.a.dumps(book),'[]','book-main'))
                 c.execute("INSERT OR REPLACE INTO settings VALUES('book',?)",(self.a.dumps(book),))
                 c.execute('INSERT INTO books VALUES(?,?,?,?)',('book-main',self.a.dumps(book),self.a.now(),self.a.now()))
+            c.execute("INSERT OR IGNORE INTO settings VALUES('books-initialized','true')")
         from research import migrate
         migrate(self)
     def normalize(self,book):
@@ -80,7 +81,8 @@ class Studio:
             if 'blocks' not in ch: ch['blocks']=[{'id':self.a.uid(),'type':'text','text':ch.get('notes','')}] if ch.get('notes') else []
         return book
     def book(self,book_id=None):
-        with self.a.connect() as c: row=c.execute('SELECT payload FROM books WHERE id=?',(book_id or 'book-main',)).fetchone()
+        with self.a.connect() as c:
+            row=c.execute('SELECT payload FROM books WHERE id=?',(book_id,)).fetchone() if book_id else c.execute("SELECT payload FROM books ORDER BY (id='book-main') DESC, updated DESC LIMIT 1").fetchone()
         if not row:raise ValueError('Projet de livre introuvable.')
         return json.loads(row[0])
     def books(self):
@@ -99,6 +101,27 @@ class Studio:
             c.execute('INSERT INTO books VALUES(?,?,?,?)',(bid,self.a.dumps(b),self.a.now(),self.a.now()))
             c.execute('INSERT INTO book_versions(id,created,label,payload,changes,book_id) VALUES(?,?,?,?,?,?)',(b['_revision'],self.a.now(),'Création du projet',self.a.dumps(b),'[]',bid))
         return b
+    def duplicate_book(self,data):
+        """Copy the current project atomically, with an independent version history.
+
+        Chapter, block and folder IDs are scoped to their book; keeping them also
+        preserves review locations and editorial references within the copy.
+        """
+        source_id=self.a.required(data,'book_id',100)
+        with self.a.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            row=c.execute('SELECT payload FROM books WHERE id=?',(source_id,)).fetchone()
+            if not row:raise ValueError('Projet de livre introuvable.')
+            b=json.loads(row[0])
+            b['_book_id']=self.a.uid();b['_revision']=self.a.uid()
+            b['title']=b['title'][:292]+' — copie'
+            proposal=b.get('editorial_proposal')
+            if isinstance(proposal,dict):
+                proposal['book_id']=b['_book_id'];proposal['revision']=b['_revision']
+            timestamp=self.a.now()
+            c.execute('INSERT INTO books VALUES(?,?,?,?)',(b['_book_id'],self.a.dumps(b),timestamp,timestamp))
+            c.execute('INSERT INTO book_versions(id,created,label,payload,changes,book_id) VALUES(?,?,?,?,?,?)',(b['_revision'],timestamp,'Duplication du livre',self.a.dumps(b),'[]',b['_book_id']))
+        return b
     def validate_book(self,b):
         self.a.required(b,'title',300)
         from research import validate
@@ -108,7 +131,7 @@ class Studio:
         brief=b.get('brief',{})
         if not isinstance(brief,dict) or any(not isinstance(brief.get(k,''),str) or len(brief.get(k,''))>6000 for k in ('intention','reader','promise','voice')):raise ValueError('Intention du livre invalide.')
         source_ids=b.get('source_ids',[])
-        if not isinstance(source_ids,list) or len(source_ids)>60 or any(not isinstance(s,str) for s in source_ids):raise ValueError('Choisissez au maximum 60 sources par livre.')
+        if not isinstance(source_ids,list) or any(not isinstance(s,str) for s in source_ids):raise ValueError('Liste de sources du livre invalide.')
         for sid in source_ids:self.a.get_source(sid)
         covers=b.get('covers',{})
         if not isinstance(covers,dict):raise ValueError('Couvertures invalides.')

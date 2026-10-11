@@ -27,6 +27,7 @@ Les fichiers Docker/Dokploy ci-dessous restent une alternative d'hébergement, n
 - Lecture : lecteur YouTube intégré, liens directs de secours, segments horodatés, sélection de passages, notes, tags, avancement et chapitres manuels.
 - Idées : citations issues des vrais segments, plusieurs références conservées, classement, favoris, relecture, notes de contexte et limites.
 - Rapprochements : similarité lexicale TF-IDF entre idées et tags, regroupement dans des dossiers. Il ne s'agit pas d'embeddings ni d'une validation sémantique ; les formulations différentes peuvent être manquées.
+- Dossiers du livre : ouverture sur une page dédiée, sources et idées visibles, ajout depuis la bibliothèque commune, classement et retour au dossier après lecture. Un nouveau dossier s’ouvre directement pour être rempli.
 - Plusieurs projets de livres indépendants : intention, lecteur, voix, sélection de sources, plan, manuscrit et historique propres à chacun ; bibliothèque commune réutilisable.
 - Accompagnement éditorial : parcours Intention → Matière → Plan → Écriture ; proposition de plan, brouillon de chapitre sourcé et relecture des lacunes/contradictions via le modèle configuré. Les propositions sont conservées et leurs éléments sont cochés avant ajout au manuscrit. Aucun remplacement automatique du texte existant.
 - Éditeur mobile : copie de secours des brouillons dans IndexedDB par livre, récupération après fermeture ou coupure et reprise de l’enregistrement au retour du réseau ; chapitres et blocs réordonnables, texte, intertitres, citations, photos/schémas et sauts de page ; enregistrement automatique, conflits entre appareils détectés, versions datées avec ajouts/retraits et retour à une version antérieure.
@@ -127,7 +128,7 @@ Les analyses n'ont pas été exécutées avec une vraie clé : l'extraction a é
 
 La synchronisation relit les fichiers locaux `outputs` lorsqu’ils existent. Dans le conteneur autonome, elle réimporte uniquement le fonds embarqué manquant. L’ajout par lien YouTube recherche les métadonnées et les sous-titres disponibles. Une restriction YouTube peut empêcher cette récupération : le lien est conservé, avec la possibilité de coller une transcription. Les vidéos sont lues via YouTube, pas téléchargées.
 
-L’accompagnateur utilise jusqu’à 60 sources choisies par livre et une sélection bornée de passages (environ 60 000 caractères, jusqu’à 12 passages par source), classés par correspondance lexicale avec le sujet et le chapitre. Il ne lit pas exhaustivement tout le fonds. Les documents sans texte sont signalés. Les références inexistantes sont rejetées ; la justesse de la paraphrase et la fiabilité des sources restent à vérifier par l’auteur. Les tests de génération utilisent une réponse simulée, sans appel facturé.
+L’accompagnateur utilise les sources choisies par livre, sans limite de nombre, et une sélection bornée de passages (environ 60 000 caractères, jusqu’à 12 passages par source), classés par correspondance lexicale avec le sujet et le chapitre. Il ne lit pas exhaustivement tout le fonds. Les documents sans texte sont signalés. Les références inexistantes sont rejetées ; la justesse de la paraphrase et la fiabilité des sources restent à vérifier par l’auteur. Les tests de génération utilisent une réponse simulée, sans appel facturé.
 
 Pour commencer : ouvrir **Livre**, créer ou choisir un projet, remplir **Intention**, sélectionner **Matière**, puis demander un **Plan accompagné**. Choisir ensuite un chapitre et utiliser **Écriture accompagnée** pour préparer un brouillon ou relire. La dernière proposition reste accessible ; les précédentes figurent dans l’historique. Le travail manuel reste disponible sans clé IA.
 
@@ -171,6 +172,12 @@ Dans **Réglages → Mot de passe de l’atelier**, saisir le mot de passe actue
 
 ## Commencer par ses livres
 
+Dans la bibliothèque commune, **Lier à des livres** permet aussi de cocher les dossiers sous chaque livre ou d’en créer un dans la même fenêtre. Les dossiers partiellement cochés conservent leurs appartenances tant qu’ils ne sont pas modifiés ; cocher un dossier ajoute toute la sélection au livre et à ce dossier, sans remplacer les autres classements.
+
+**Vues de tri** propose **À répartir**, **Vidéos à lire**, **Sources sans texte** et **Idées à vérifier**, selon la section. **Enregistrer cette vue** conserve les filtres et la recherche sous un nom choisi ; ces vues personnelles sont stockées dans le navigateur utilisé et peuvent être supprimées depuis **Gérer mes vues**.
+
+En lecture du livre, la **loupe** recherche un mot ou une expression dans tous les chapitres du manuscrit. Chaque résultat ouvre sa page et met le passage en évidence. Lorsqu’un passage ou du texte est sélectionné, la **croix ronde** au-dessus à droite ferme la sélection sans quitter la lecture ; Échap permet également de fermer une sélection.
+
 L’accueil **Mes livres** présente les projets avec leur couverture, leur description et leur état (en préparation, en écriture, terminé). Créer un livre, puis ouvrir son espace : **Vue d’ensemble**, **Dossiers**, **Sources**, **Idées** et **Manuscrit**. Le sélecteur de livre reste visible pendant la recherche et l’écriture.
 
 Les sources et idées restent communes, mais chaque livre conserve ses appartenances, ses dossiers et ses notes de travail. **Choisir dans la bibliothèque commune** ajoute les éléments au livre ; **Classer / notes** permet de choisir plusieurs dossiers. **À classer** retrouve les éléments sans dossier. Retirer un élément du livre conserve l’original, les autres projets et les références déjà présentes dans le manuscrit. Supprimer un dossier conserve son contenu dans le livre. Les imports réalisés depuis un projet sont rattachés à ce projet.
@@ -179,7 +186,7 @@ Dans **Sources** et **Idées**, **Afficher : Ce livre / Bibliothèque commune** 
 
 La **Bibliothèque commune** présente les sources et les idées en cartes avec miniatures et livres liés. **Ouvrir la source** donne accès à son lecteur ; **Ouvrir l’idée** affiche ses notes et les passages sources. **Lier à des livres** permet de cocher plusieurs ouvrages avec leurs couvertures. Pour répartir plusieurs éléments ensemble, cocher leurs cartes puis utiliser **Lier la sélection à des livres**. Une case partiellement cochée indique que seuls certains éléments sont déjà liés : ce livre reste inchangé tant que sa case n’est pas modifiée. Décocher retire les liens, dossiers et notes propres au livre concerné, tout en conservant les originaux et les autres livres. Le filtre **Livres liés** retrouve les éléments d’un ouvrage ou ceux **À répartir · aucun livre**. Sur téléphone, l’entrée **Bibliothèque** donne directement accès à cette vue.
 
-L’ancien fonds et ses dossiers sont repris dans le livre principal au premier démarrage de cette version. Les autres projets reprennent leurs sources éditoriales et leurs idées de chapitres. Les classements font partie du livre, de ses versions et de la sauvegarde complète. La sélection de 60 sources dans le manuscrit sert aux préparations IA ; la matière du livre peut contenir davantage de documents.
+L’ancien fonds et ses dossiers sont repris dans le livre principal au premier démarrage de cette version. Les autres projets reprennent leurs sources éditoriales et leurs idées de chapitres. Les classements font partie du livre, de ses versions et de la sauvegarde complète. La sélection de sources dans le manuscrit sert aux préparations IA ; cette sélection et la matière du livre n’ont pas de limite de nombre de sources.
 
 ### Organiser par API
 
@@ -204,3 +211,9 @@ Les listes `/api/v1/sources` et `/api/v1/ideas` acceptent `book_id`, `folder_id`
 Vérification du parcours complet sur ordinateur et téléphone : `node tests/research-books.cjs` avec Playwright installé.
 
 Vérification de la bibliothèque visuelle et des associations à plusieurs livres : `node tests/shared-library.cjs` (miniatures, lecteur, détails des idées, associations en lot et liens partiels).
+
+Depuis **Mes livres**, **Lire le livre** ouvre directement la lecture paginée et revient à la bibliothèque à sa fermeture. Le menu **⋮**, placé en haut à droite de chaque carte, propose la modification des informations, le téléchargement, la duplication et la suppression avec confirmation. **Dupliquer le livre** crée un projet « Titre — copie » avec le manuscrit, les couvertures, l’intention, la matière, les dossiers et les notes. La copie possède son propre historique, qui commence à la duplication ; les sources, idées et images communes restent partagées.
+
+Vérification de la duplication et de la lecture directe sur ordinateur et téléphone : `node tests/book-library-actions.cjs` avec Playwright installé.
+
+Depuis **Mes livres**, **Toutes les ressources** ou **Sources** ouvre la bibliothèque commune, même si un dernier livre est mémorisé. Dans l’espace d’un livre ouvert, **Sources** affiche les sources de ce livre. L’accès **Bibliothèque** permet de retrouver tout le fonds à tout moment ; les onglets **Sources / Idées** parcourent les deux types de ressources communes.

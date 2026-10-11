@@ -17,7 +17,13 @@ const assert=require('node:assert/strict');
       await page.goto(base);await page.locator(width<760?'[data-mobile-nav="book"]':'[data-nav="book"]').click();
       try{await page.locator('#modeRead').click()}catch(error){console.error('Reader startup:',errors,failedRequests,await page.locator('#app').innerText());throw error}
       await page.locator('#readerReviews').waitFor();
+      assert(await page.evaluate(()=>{const buttons=[...document.querySelectorAll('.reading-header button')].map(b=>b.getBoundingClientRect());return buttons.every((a,i)=>buttons.slice(i+1).every(b=>a.right<=b.left||b.right<=a.left||a.bottom<=b.top||b.bottom<=a.top))}));
+      await page.locator('#readerBookSearch').click();await page.locator('#readerBookQuery').fill('Le second chapitre');await page.locator('#readerSearchForm button').click();
+      await page.locator('[data-reader-search-result]').first().click();await page.locator('#pageContent').getByText(/Le second chapitre/).waitFor();assert.equal(await page.locator('.reading-search-match').count(),1);
+      await page.locator('#readerBookSearch').click();await page.locator('#readerBookQuery').fill('zzzintrouvable');await page.locator('#readerSearchForm button').click();await page.getByText('Aucun résultat dans le livre.',{exact:true}).waitFor();await page.keyboard.press('Escape');
       await page.locator('#readerToc').click();await page.locator('[data-toc-page]').first().click();
+      await page.evaluate(()=>{const el=document.querySelector('#pageContent [data-read-block]'),node=el.firstChild;const range=document.createRange();range.setStart(node,0);range.setEnd(node,Math.min(10,node.textContent.length));const selection=getSelection();selection.removeAllRanges();selection.addRange(range)});
+      await page.locator('#clearReaderSelection').waitFor();await page.screenshot({path:path.join(process.env.TEMP||'/tmp',`atelier-selection-close-${width}.png`)});await page.locator('#clearReaderSelection').click();assert(await page.locator('#readerEdit').isDisabled());assert(await page.evaluate(()=>getSelection().isCollapsed));
       await page.locator('#pageContent [data-read-block]').first().click();
       await page.locator('#readerSources').click();await page.locator('[data-reading-source]').first().click();
       await page.locator('#readerSourceContent').getByText('Le passage original de la source.').waitFor();

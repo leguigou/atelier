@@ -1,0 +1,81 @@
+// Folder counts must agree with the sources displayed, including empty folders.
+const {chromium}=require('playwright');
+const {spawn}=require('node:child_process');
+const path=require('node:path');
+const assert=require('node:assert/strict');
+(async()=>{
+  const fixture=spawn(process.env.PYTHON||'python',[path.join(__dirname,'reader_fixture.py')],{stdio:['ignore','pipe','pipe']});
+  fixture.stderr.on('data',s=>process.stderr.write(s));let browser;
+  try{
+    const base=await new Promise((resolve,reject)=>{fixture.stdout.once('data',s=>resolve(s.toString().trim()));fixture.once('exit',code=>reject(Error('Fixture exited '+code)))});
+    browser=await chromium.launch({headless:true});
+    for(const width of [1280,390]){
+      const context=await browser.newContext({viewport:{width,height:900}}),page=await context.newPage(),errors=[];
+      page.on('pageerror',e=>errors.push(e.message));
+      const post=async(route,data)=>{const response=await context.request.post(base+route,{data});assert(response.ok(),await response.text());return response.json()};
+      let book=await post('/api/v1/books',{title:'Filtre des dossiers '+width});
+      const ids=[];
+      for(let n=1;n<=3;n++)ids.push((await post('/api/v1/sources',{title:'Document '+width+' '+n,author:'Auteur',text:'Texte de contrôle.'})).id);
+      const change=async data=>{book=await post('/api/v1/books/'+book._book_id+'/research',{revision:book._revision,...data})};
+      const idea=await post('/api/idea',{title:'Idée de dossier '+width,refs:[{source_id:ids[0],start:0,end:0}]});
+      await change({action:'add',source_ids:ids});
+      for(const name of ['Marketing','Vente','Vide'])await change({action:'folder-create',name});
+      const [marketing,vente,vide]=book.research.folders;
+      await change({action:'classify',source_ids:ids.slice(0,2),folder_ids:[marketing.id]});
+      await change({action:'classify',source_ids:[ids[1]],folder_ids:[vente.id],mode:'add'});
+      await page.goto(base);await page.locator('[data-open-book="'+book._book_id+'"]').first().click();await page.locator('#overviewSources').click();
+      const check=async(folder,count,label)=>{
+        await page.locator('#researchFolderFilter').selectOption(folder);
+        assert.equal(await page.locator('.source-card').count(),count);
+        assert.match(await page.locator('.resultbar').innerText(),new RegExp('^'+count+' source'));
+        const summary=await page.locator('.research-collection').innerText();
+        assert(summary.includes(label),summary);
+        assert(summary.includes(count+' source'+(count===1?' affichée':'s affichées')),summary);
+        assert(summary.includes('3 sources du livre'),summary);
+      };
+      await check(marketing.id,2,'Marketing');await check(vente.id,1,'Vente');await check(vide.id,0,'Vide');await check('unfiled',1,'À classer');await check('',3,'Livre');
+      await page.locator(width<760?'[data-mobile-nav="folders"]':'[data-nav="folders"]').click();
+      await page.locator('[data-folder-open="'+marketing.id+'"]').click();assert.equal(await page.locator('.source-card').count(),2);
+      assert.equal(await page.locator('.research-folder-grid').count(),0);
+      assert.equal(await page.locator('.workspace-guide').count(),0);
+      assert.equal(await page.locator('.heading h1').innerText(),'Marketing');
+      assert(await page.locator('.heading h1').evaluate(e=>e===document.activeElement&&e.getBoundingClientRect().top<innerHeight));
+      assert((await page.locator('.crumb').innerText()).endsWith('/ Dossiers / Marketing'));
+      await page.locator('[data-like]').first().click();await page.locator('[data-like].liked').waitFor();
+      assert.equal(await page.locator('#backToFolders').count(),1);
+      await page.locator('[data-open="'+ids[0]+'"]').first().click();
+      await page.locator('#back').filter({hasText:'Retour au dossier'}).click();
+      assert.equal(await page.locator('.heading h1').innerText(),'Marketing');
+      await page.locator('#openResearchFolder').selectOption(vente.id);assert.equal(await page.locator('.source-card').count(),1);
+      await page.locator('#openResearchFolder').selectOption(vide.id);assert.equal(await page.locator('.source-card').count(),0);
+      await page.locator('.folder-empty-intro').waitFor();
+      await page.locator('#folderAddSources').click();
+      assert((await page.locator('#modal').innerText()).includes('dossier « Vide »'));
+      await page.locator('#researchPickerQuery').fill('Document '+width+' 3');await page.locator('[data-research-pick="'+ids[2]+'"]').check();await page.locator('#researchPickerSave').click();
+      await page.locator('#modal').waitFor({state:'hidden'});assert.equal(await page.locator('.source-card').count(),1);
+      assert.equal(await page.locator('.heading h1').innerText(),'Vide');
+      assert.equal(await page.locator('.folder-empty-intro').count(),0);
+      await page.locator('#backToFolders').click();await page.locator('#newResearchFolder').click();
+      await page.locator('#researchFolderForm [name=name]').fill('Nouveau thème');
+      await page.locator('#researchFolderForm button[type=submit]').click();await page.locator('#modal').waitFor({state:'hidden'});
+      assert.equal(await page.locator('.heading h1').innerText(),'Nouveau thème');
+      await page.locator('#folderAddIdeas').click();
+      await page.locator('#researchPickerQuery').fill('Idée de dossier '+width);
+      await page.locator('[data-research-pick="'+idea.id+'"]').check();await page.locator('#researchPickerSave').click();
+      await page.locator('#modal').waitFor({state:'hidden'});
+      await page.locator('[data-folder-idea="'+idea.id+'"]').click();await page.locator('#ideaForm').waitFor();
+      await page.locator('#modal [data-close]').click();
+      await page.locator('[data-folder-classify-idea="'+idea.id+'"]').click();await page.locator('#researchClassifyForm').waitFor();
+      await page.locator('#modal [data-close]').click();
+      await page.locator('[data-book-add="'+idea.id+'"]').click();await page.locator('#addBookForm').waitFor();
+      await page.locator('#modal [data-close]').click();
+      await page.locator('#backToFolders').click();assert.equal(await page.locator('[data-folder-open]').count(),4);
+      assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+      await page.screenshot({path:path.join(process.env.TEMP,`atelier-folders-list-${width}.png`),fullPage:true});
+      await page.locator('[data-folder-open="'+vide.id+'"]').click();
+      await page.screenshot({path:path.join(process.env.TEMP,`atelier-folder-detail-${width}.png`),fullPage:true});
+      assert.deepEqual(errors,[]);await context.close();
+    }
+    console.log('Folder lists and counts passed on desktop and mobile.');
+  }finally{await browser?.close();fixture.kill()}
+})().catch(error=>{console.error(error);process.exitCode=1});
