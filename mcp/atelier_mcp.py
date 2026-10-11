@@ -1645,6 +1645,15 @@ def definir_couverture_livre(args):
                 variantes=couvertures.get(face + "_variants", []), message=action)
 
 
+# Mise en forme du manuscrit : contrat partagé avec l'application (book_markdown.py,
+# public/formatting.js). À garder aligné avec ce que l'Atelier interprète réellement.
+MD_NOTE = (" Mise en forme : le texte d'un bloc accepte le Markdown, interprété à la lecture, dans "
+           "le PDF A5 et dans l'EPUB — CommonMark plus tableaux et barré, et les extensions Atelier "
+           "++souligné++, ==surligné==, m^2^, H~2~. « ## » pour un intertitre, « - » ou « 1. » pour "
+           "une liste, « > » pour une citation, « | » pour un tableau, « ** » pour le gras. Mieux "
+           "vaut plusieurs blocs courts qu'un seul mur de texte. Le HTML brut n'est pas interprété "
+           "(il s'affiche tel quel) et une image doit venir de la médiathèque (« /api/asset?id=… »).")
+
 TOOLS = [
     dict(name="etat_bibliotheque",
          description="Vue d'ensemble de l'Atelier : nombre de sources et de transcriptions, "
@@ -1807,7 +1816,8 @@ TOOLS = [
          handler=definir_intention),
     dict(name="ajouter_chapitre",
          description="Ajouter un chapitre à un livre (titre, objectif, position facultative). "
-                     "Crée une version du livre dans l'historique.",
+                     "Crée une version du livre dans l'historique. Le texte du chapitre s'ajoute "
+                     "ensuite avec ajouter_texte_chapitre, en Markdown.",
          inputSchema={"type": "object", "properties": {
              "book_id": {"type": "string"}, "title": {"type": "string"},
              "purpose": {"type": "string"}, "position": {"type": "integer"}},
@@ -1815,7 +1825,8 @@ TOOLS = [
          handler=ajouter_chapitre),
     dict(name="ajouter_texte_chapitre",
          description="Ajouter un paragraphe rédigé à un chapitre existant, avec les sources qui "
-                     "l'appuient. Le texte est ajouté au manuscrit, jamais en remplacement.",
+                     "l'appuient. Le texte est ajouté au manuscrit, jamais en remplacement."
+                     + MD_NOTE,
          inputSchema={"type": "object", "properties": {
              "book_id": {"type": "string"}, "chapter_id": {"type": "string"},
              "text": {"type": "string"},
@@ -1852,7 +1863,7 @@ TOOLS = [
                      "(au lieu d'en ajouter à la suite). À utiliser pour une réécriture : les "
                      "anciens paragraphes sont remplacés, les images du chapitre sont conservées "
                      "et les idées rattachées ne sont pas touchées. La version précédente reste "
-                     "dans l'historique du livre.",
+                     "dans l'historique du livre." + MD_NOTE,
          inputSchema={"type": "object", "properties": {
              "book_id": {"type": "string"}, "chapter_id": {"type": "string"},
              "paragraphs": {"type": "array", "items": {"type": "string"}},
@@ -2161,7 +2172,8 @@ def handle(message):
             "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
             "instructions": "Atelier : bibliothèque de sources, idées sourcées et projets de livre. "
                             "Commencez par etat_bibliotheque, utilisez chercher_passages pour "
-                            "répondre sur le contenu, et citez toujours auteur, titre et horodatage.",
+                            "répondre sur le contenu, et citez toujours auteur, titre et horodatage."
+                            + MD_NOTE,
         })
     elif method == "notifications/initialized":
         return

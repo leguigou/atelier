@@ -62,6 +62,13 @@ jeton API Atelier suffisent.
 | `definir_prompt_ia` / `regler_connexion_ia` | personnaliser un prompt de mission, régler modèle, adresse et instruction (la clé API ne passe jamais par le MCP) |
 | `definir_couverture_livre` | première et quatrième de couverture, choisies parmi les images de l'atelier |
 
+Le texte rédigé dans un bloc accepte le **Markdown**, interprété à la lecture, dans le PDF A5 et
+dans l'EPUB : CommonMark plus tableaux et barré, et les extensions Atelier `++souligné++`,
+`==surligné==`, `m^2^`, `H~2~`. Un chapitre gagne à être écrit en plusieurs blocs courts — un par
+section, avec `##` pour les intertitres, `-` ou `1.` pour les listes, `>` pour une citation — plutôt
+qu'en un seul mur de texte. Le HTML brut n'est pas interprété (il s'affiche tel quel) et une image
+doit venir de la médiathèque (`/api/asset?id=…`).
+
 Deux principes ont guidé ce lot. D'abord la **symétrie** : un LLM qui n'a que « ajouter » crée des
 doublons au lieu de corriger, et remplit la bibliothèque sans jamais pouvoir la ranger — chaque
 création a donc désormais son pendant (modifier, déplacer, supprimer). Ensuite la **protection** :
