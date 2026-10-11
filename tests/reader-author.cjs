@@ -34,6 +34,23 @@ const assert=require('node:assert/strict');
         assert.equal(layout.font,'16px','search input avoids mobile focus zoom');
         await page.screenshot({path:path.join(process.env.TEMP||'/tmp',`atelier-search-mobile-${width}.png`)});
       }
+      if(width<760){
+        await page.locator('#readerBookQuery').tap();
+        await page.keyboard.type('Le second');
+        const paginationBefore=await page.evaluate(()=>paginationRun);
+        await page.setViewportSize({width,height:520});
+        await page.waitForTimeout(300);
+        assert.equal(await page.evaluate(()=>paginationRun),paginationBefore,'keyboard opening does not rebuild the reader while typing');
+        assert.equal(await page.locator('#readerBookQuery').evaluate(el=>document.activeElement===el),true,'keyboard resize preserves search focus');
+        await page.keyboard.type(' chapitre');
+        assert.equal(await page.locator('#readerBookQuery').inputValue(),'Le second chapitre','typing continues after keyboard opens');
+        await page.keyboard.press('ArrowLeft');
+        await page.keyboard.type('X');
+        assert.equal(await page.locator('#readerBookQuery').inputValue(),'Le second chapitrXe','caret remains editable');
+        await page.setViewportSize({width,height:900});
+        await page.waitForTimeout(250);
+        assert.equal(await page.evaluate(()=>paginationRun),paginationBefore,'keyboard closing also defers pagination until panel closes');
+      }
       await page.locator('#readerBookQuery').fill('Le second chapitre');await page.locator('#readerSearchForm button').click();
       await page.locator('[data-reader-search-result]').first().click();await page.locator('#pageContent').getByText(/Le second chapitre/).waitFor();assert.equal(await page.locator('.reading-search-match').count(),1);
       await page.locator('#readerBookSearch').click();await page.locator('#readerBookQuery').fill('zzzintrouvable');await page.locator('#readerSearchForm button').click();await page.getByText('Aucun résultat dans le livre.',{exact:true}).waitFor();await page.keyboard.press('Escape');

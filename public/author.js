@@ -55,7 +55,7 @@ const ReaderAuthor=(()=>{
       }
       $('#readerSearchCount').textContent=total?`${total} résultat(s) dans le livre${total>100?' · 100 premiers affichés':''}`:'Aucun résultat dans le livre.';
       $('#readerSearchResults').innerHTML=results.map((r,n)=>`<button data-reader-search-result="${n}"><strong>${esc(r.title)}</strong><span>${esc(r.excerpt)}</span></button>`).join('');
-      $$('[data-reader-search-result]').forEach(btn=>btn.onclick=()=>{const r=results[Number(btn.dataset.readerSearchResult)];pending=r;restore(r);closePanel(false);showPage();const passage=$$('#pageContent [data-read-block]').find(el=>el.dataset.readChapter===r.chapter_id&&el.dataset.readBlock===r.block_id&&Number(el.dataset.readEnd)>r.offset);if(passage){passage.classList.add('reading-search-match');passage.focus()}});
+      $$('[data-reader-search-result]').forEach(btn=>btn.onclick=async()=>{const r=results[Number(btn.dataset.readerSearchResult)];pending=r;restore(r);closePanel(false);showPage();if(readingResizePending)await paginate();const passage=$$('#pageContent [data-read-block]').find(el=>el.dataset.readChapter===r.chapter_id&&el.dataset.readBlock===r.block_id&&Number(el.dataset.readEnd)>r.offset);if(passage){passage.classList.add('reading-search-match');passage.focus()}});
     };
   }
   function install(signal){
@@ -86,7 +86,7 @@ const ReaderAuthor=(()=>{
     sourceRequest++;$('#readerPanel')?.remove();$('#readingOverlay')?.classList.remove('reader-panel-open');
     for(const selector of ['.page-stage','.reading-controls','.reader-author-tools','.reading-header']){const el=$(selector);if(el)el.inert=false}
     if(panelFocus?.isConnected&&!panelFocus.disabled)panelFocus.focus();else $('#readerReviews')?.focus();
-    if(edited&&reading&&repaginate){updateReading();paginate()}
+    if(reading&&repaginate&&(edited||readingResizePending)){if(edited)updateReading();paginate()}
   }
   function escape(){if($('#readerPanel')){closePanel();return true}if(selected){clearSelection();return true}return false}
   function find(target=selected){const ch=bookDraft?.chapters.find(c=>c.id===target?.chapter_id);return {ch,block:ch?.blocks.find(b=>b.id===target?.block_id)}}
