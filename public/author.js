@@ -45,10 +45,37 @@ const ReaderAuthor=(()=>{
     for(const id of ['readerEdit','readerNote','readerSources'])if($('#'+id))$('#'+id).disabled=true;
   }
   function searchBook(){
-    panel('Rechercher dans le livre',`<form id="readerSearchForm"><label>Mot ou expression<input id="readerBookQuery" type="search" placeholder="Dans tout le livre…" autocomplete="off"></label><button type="submit" class="primary">Rechercher</button></form><p id="readerSearchCount" role="status"></p><div id="readerSearchResults"></div>`);
+    panel('Rechercher dans le livre',`<form id="readerSearchForm"><div class="reader-search-field"><label>Mot ou expression<input id="readerBookQuery" type="search" placeholder="Dans tout le livre…" autocomplete="off"></label><div id="readerWordSuggestions" role="group" aria-label="Mots trouvés dans le livre" hidden></div></div><button type="submit" class="primary">Rechercher</button></form><p id="readerSearchCount" role="status"></p><div id="readerSearchResults"></div>`);
     $('#readerPanel').classList.add('reader-search-panel');
-    $('#readerBookQuery').focus();
-    $('#readerSearchForm').onsubmit=e=>{e.preventDefault();const q=$('#readerBookQuery').value.trim(),needle=norm(q),results=[];if(!needle){$('#readerSearchResults').innerHTML='';$('#readerSearchCount').textContent='Saisissez un mot ou une expression.';return}
+    const input=$('#readerBookQuery'),suggestions=$('#readerWordSuggestions'),vocabulary=new Map();
+    for(const ch of bookDraft.chapters)for(const b of ch.blocks||[]){
+      for(const word of String(b.text||'').match(/[\p{L}\p{M}]+(?:['’\-][\p{L}\p{M}]+)*/gu)||[]){
+        const key=norm(word);if(key.length<2)continue;
+        const entry=vocabulary.get(key);if(entry)entry.count++;else vocabulary.set(key,{word,key,count:1});
+      }
+    }
+    const words=[...vocabulary.values()].sort((a,b)=>b.count-a.count||a.word.localeCompare(b.word,'fr'));
+    const suggest=()=>{
+      if(input.composing)return;
+      const caret=input.selectionStart??input.value.length,fragment=input.value.slice(0,caret).match(/[\p{L}\p{M}]+(?:['’\-][\p{L}\p{M}]+)*$/u)?.[0]||'',prefix=norm(fragment);
+      const matches=prefix.length>=2?words.filter(w=>w.key.startsWith(prefix)&&w.key!==prefix).slice(0,5):[];
+      suggestions.hidden=!matches.length;
+      suggestions.innerHTML=matches.length?'<span>Mots du livre</span>'+matches.map((w,i)=>`<button type="button" data-reader-word="${i}">${esc(w.word)}</button>`).join(''):'';
+      suggestions.querySelectorAll('button').forEach(button=>{
+        button.onpointerdown=e=>e.preventDefault();
+        button.onclick=()=>{
+          const word=matches[Number(button.dataset.readerWord)].word,start=caret-fragment.length;
+          const tail=input.value.slice(caret).match(/^[\p{L}\p{M}'’\-]*/u)?.[0].length||0;
+          input.value=input.value.slice(0,start)+word+input.value.slice(caret+tail);
+          input.focus({preventScroll:true});input.setSelectionRange(start+word.length,start+word.length);
+          suggestions.hidden=true;suggestions.innerHTML='';
+        };
+      });
+    };
+    input.oninput=suggest;input.onclick=suggest;
+    input.oncompositionstart=()=>{input.composing=true};input.oncompositionend=()=>{input.composing=false;suggest()};
+    input.focus();
+    $('#readerSearchForm').onsubmit=e=>{e.preventDefault();suggestions.hidden=true;const q=$('#readerBookQuery').value.trim(),needle=norm(q),results=[];if(!needle){$('#readerSearchResults').innerHTML='';$('#readerSearchCount').textContent='Saisissez un mot ou une expression.';return}
       let total=0;
       for(const ch of bookDraft.chapters)for(const b of ch.blocks||[]){const text=b.text||'',haystack=norm(text);let offset=0,index;
         while((index=haystack.indexOf(needle,offset))!==-1){total++;if(results.length<100)results.push({chapter_id:ch.id,block_id:b.id,offset:index,title:ch.title,excerpt:text.slice(Math.max(0,index-65),index+needle.length+100)});offset=index+Math.max(1,needle.length)}

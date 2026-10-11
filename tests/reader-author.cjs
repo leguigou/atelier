@@ -19,6 +19,26 @@ const assert=require('node:assert/strict');
       await page.locator('#readerReviews').waitFor();
       assert(await page.evaluate(()=>{const buttons=[...document.querySelectorAll('.reading-header button')].map(b=>b.getBoundingClientRect());return buttons.every((a,i)=>buttons.slice(i+1).every(b=>a.right<=b.left||b.right<=a.left||a.bottom<=b.top||b.bottom<=a.top))}));
       await page.locator('#readerBookSearch').click();
+      await page.locator('#readerBookQuery').fill('CONSERV');
+      assert.equal(await page.locator('[data-reader-word]').count(),1,'repeated words produce one suggestion');
+      assert.match(await page.locator('[data-reader-word]').innerText(),/conservée/i);
+      await page.locator('[data-reader-word]').click();
+      assert.match(await page.locator('#readerBookQuery').inputValue(),/conservée/i,'suggestion keeps the word from the book');
+      assert.equal(await page.locator('#readerBookQuery').evaluate(el=>document.activeElement===el),true,'choosing a word preserves input focus');
+      await page.locator('#readerBookQuery').fill('CONSERVÉ');
+      assert.equal(await page.locator('[data-reader-word]').count(),1,'suggestions ignore case and accents');
+      await page.locator('#readerBookQuery').fill('Le pa');
+      assert((await page.locator('[data-reader-word]').count())<=5,'at most five suggestions');
+      if(width<760){
+        assert(await page.locator('#readerPanel').evaluate(el=>el.scrollWidth===el.clientWidth),'suggestions fit the mobile panel');
+        await page.screenshot({path:path.join(process.env.TEMP||'/tmp',`atelier-word-suggestions-${width}.png`)});
+        await page.locator('[data-reader-word]').filter({hasText:/^passage$/i}).tap();
+      }else await page.locator('[data-reader-word]').filter({hasText:/^passage$/i}).click();
+      assert.equal(await page.locator('#readerBookQuery').inputValue(),'Le passage','only the last word is completed');
+      assert.equal(await page.locator('#readerSearchResults button').count(),0,'completion leaves the query editable');
+      await page.locator('#readerBookQuery').fill('zzzintrouvable');
+      assert.equal(await page.locator('#readerWordSuggestions').isVisible(),false,'no invented suggestions');
+      await page.locator('#readerBookQuery').fill('');
       if(width<760){
         const layout=await page.evaluate(()=>{
           const rect=s=>{const r=document.querySelector(s).getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height}};
