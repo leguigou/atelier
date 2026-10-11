@@ -45,7 +45,8 @@ const ReaderAuthor=(()=>{
     for(const id of ['readerEdit','readerNote','readerSources'])if($('#'+id))$('#'+id).disabled=true;
   }
   function searchBook(){
-    panel('Rechercher dans le livre',`<form id="readerSearchForm"><label>Mot ou expression<input id="readerBookQuery" type="search" placeholder="Rechercher dans tout le livre" autocomplete="off"></label><button type="submit">Rechercher</button></form><p id="readerSearchCount" role="status"></p><div id="readerSearchResults"></div>`);
+    panel('Rechercher dans le livre',`<form id="readerSearchForm"><label>Mot ou expression<input id="readerBookQuery" type="search" placeholder="Dans tout le livre…" autocomplete="off"></label><button type="submit" class="primary">Rechercher</button></form><p id="readerSearchCount" role="status"></p><div id="readerSearchResults"></div>`);
+    $('#readerPanel').classList.add('reader-search-panel');
     $('#readerBookQuery').focus();
     $('#readerSearchForm').onsubmit=e=>{e.preventDefault();const q=$('#readerBookQuery').value.trim(),needle=norm(q),results=[];if(!needle){$('#readerSearchResults').innerHTML='';$('#readerSearchCount').textContent='Saisissez un mot ou une expression.';return}
       let total=0;

@@ -10,7 +10,7 @@ const assert=require('node:assert/strict');
   try{
     const base=await new Promise((resolve,reject)=>{fixture.stdout.once('data',s=>resolve(s.toString().trim()));fixture.once('exit',code=>reject(Error('Fixture exited '+code)))});
     browser=await chromium.launch({headless:true});
-    for(const width of [1280,390]){
+    for(const width of [1280,390,320]){
       const context=await browser.newContext({viewport:{width,height:900},hasTouch:true});
       const page=await context.newPage(),errors=[],failedRequests=[];page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());
       page.on('requestfailed',r=>failedRequests.push({url:r.url(),error:r.failure()?.errorText}));
@@ -18,7 +18,23 @@ const assert=require('node:assert/strict');
       try{await page.locator('#modeRead').click()}catch(error){console.error('Reader startup:',errors,failedRequests,await page.locator('#app').innerText());throw error}
       await page.locator('#readerReviews').waitFor();
       assert(await page.evaluate(()=>{const buttons=[...document.querySelectorAll('.reading-header button')].map(b=>b.getBoundingClientRect());return buttons.every((a,i)=>buttons.slice(i+1).every(b=>a.right<=b.left||b.right<=a.left||a.bottom<=b.top||b.bottom<=a.top))}));
-      await page.locator('#readerBookSearch').click();await page.locator('#readerBookQuery').fill('Le second chapitre');await page.locator('#readerSearchForm button').click();
+      await page.locator('#readerBookSearch').click();
+      if(width<760){
+        const layout=await page.evaluate(()=>{
+          const rect=s=>{const r=document.querySelector(s).getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height}};
+          const label=document.querySelector('#readerSearchForm label'),range=document.createRange();range.selectNode(label.firstChild);
+          return {panelWidth:document.querySelector('#readerPanel').clientWidth,scrollWidth:document.querySelector('#readerPanel').scrollWidth,title:rect('#readerPanel h2'),close:rect('#closeReaderPanel'),input:rect('#readerBookQuery'),button:rect('#readerSearchForm button'),labelBottom:range.getBoundingClientRect().bottom,font:getComputedStyle(document.querySelector('#readerBookQuery')).fontSize};
+        });
+        assert.equal(layout.scrollWidth,layout.panelWidth,'search panel has no horizontal overflow');
+        assert(layout.title.right<=layout.close.left-8,'title and close button have separate space');
+        assert.equal(layout.close.width,44);assert.equal(layout.close.height,44);
+        assert(layout.input.top-layout.labelBottom>=8,'focus outline does not overlap label');
+        assert(layout.button.top-layout.input.bottom>=12,'search action has breathing room');
+        assert.equal(layout.input.left,layout.button.left);assert.equal(layout.input.width,layout.button.width);
+        assert.equal(layout.font,'16px','search input avoids mobile focus zoom');
+        await page.screenshot({path:path.join(process.env.TEMP||'/tmp',`atelier-search-mobile-${width}.png`)});
+      }
+      await page.locator('#readerBookQuery').fill('Le second chapitre');await page.locator('#readerSearchForm button').click();
       await page.locator('[data-reader-search-result]').first().click();await page.locator('#pageContent').getByText(/Le second chapitre/).waitFor();assert.equal(await page.locator('.reading-search-match').count(),1);
       await page.locator('#readerBookSearch').click();await page.locator('#readerBookQuery').fill('zzzintrouvable');await page.locator('#readerSearchForm button').click();await page.getByText('Aucun résultat dans le livre.',{exact:true}).waitFor();await page.keyboard.press('Escape');
       await page.locator('#readerToc').click();await page.locator('[data-toc-page]').first().click();
