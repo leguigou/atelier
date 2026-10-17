@@ -1,9 +1,12 @@
 """Persistent, source-grounded conversational agent for Atelier."""
-import json, re, threading
+import json, os, re, threading
 
 
 MAX_TURNS = 24
 MAX_TOOL_LOOPS = 8
+# Chapter text handed to the assistant. Capped for the context window, never silently: each chapter
+# carries text_longueur/text_complet so the model knows when it only sees the beginning.
+AGENT_CHAPTER_CHARS = int(os.environ.get('ATELIER_AGENT_CHAPTER_CHARS', '20000'))
 
 
 def _row_thread(row):
@@ -72,8 +75,13 @@ def _read_source(app, args):
 
 def _read_book(studio, args):
     book=studio.book(str(args.get('book_id') or 'book-main'))
+    def chapitre(c):
+        texte='\n\n'.join(b.get('text','') for b in c.get('blocks',[]) if b.get('type') in ('text','heading','quote'))
+        return dict(id=c['id'],title=c['title'],purpose=c.get('purpose',''),text=texte[:AGENT_CHAPTER_CHARS],
+                    text_longueur=len(texte),text_complet=len(texte)<=AGENT_CHAPTER_CHARS,
+                    source_ids=list(dict.fromkeys(s for b in c.get('blocks',[]) for s in b.get('source_ids',[]))))
     return dict(id=book['_book_id'],revision=book['_revision'],title=book['title'],brief=book.get('brief',{}),source_ids=book.get('source_ids',[]),
-                chapters=[dict(id=c['id'],title=c['title'],purpose=c.get('purpose',''),text='\n\n'.join(b.get('text','') for b in c.get('blocks',[]) if b.get('type') in ('text','heading','quote'))[:6000],source_ids=list(dict.fromkeys(s for b in c.get('blocks',[]) for s in b.get('source_ids',[])))) for c in book['chapters']])
+                chapters=[chapitre(c) for c in book['chapters']])
 
 
 def _search_ideas(app, args):

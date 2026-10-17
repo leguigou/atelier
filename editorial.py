@@ -1,9 +1,26 @@
 """Source-grounded editorial proposals. Generation never mutates a manuscript."""
-import json, re
+import json, os, re
 
 MAX_IDEAS = 24          # ideas mobilised at most in one proposal
 IDEA_BUDGET = 14000     # characters reserved for the transcript passages behind the ideas
 PASSAGE_CHARS = 2200    # characters kept per idea passage
+
+# The model has a finite window, so a chapter is capped before being sent. The cap is never silent:
+# chapter_context() reports the real length and the prompt tells the model its view is partial.
+CHAPTER_TEXT_BUDGET = int(os.environ.get('ATELIER_CHAPTER_TEXT_BUDGET', '60000'))
+MAX_PARAGRAPHE = int(os.environ.get('ATELIER_MAX_PARAGRAPHE', '60000'))
+
+
+def chapter_context(chapter, budget=CHAPTER_TEXT_BUDGET):
+    """Manuscript text of one chapter, with its real length and whether the model sees all of it."""
+    ecrit = '\n\n'.join((bloc.get('text') or '').strip() for bloc in (chapter.get('blocks') or [])
+                        if (bloc.get('text') or '').strip())
+    texte = ecrit or chapter.get('notes', '')
+    notes = chapter.get('notes', '')
+    return dict(title=chapter.get('title', ''), text=texte[:budget],
+                text_longueur=len(texte), text_complet=len(texte) <= budget,
+                notes=notes[:4000], notes_longueur=len(notes),
+                purpose=chapter.get('purpose', ''))
 
 
 def _source_cache(app, ids):
@@ -151,10 +168,13 @@ def propose(studio, data, progress=None):
         'review': 'analysis: texte (ce que le chapitre affirme, confronté aux idées et aux passages), interpretation: texte (diagnostic, du plus grave au plus léger), rationale: texte (les actions recommandées, dans l’ordre), questions: [lacune, contradiction ou vérification nécessaire]'
     }[mode]
     prompt = app.prompt_text('editorial') + {'draft': METHOD, 'review': METHOD_REVIEW}.get(mode, '') + ' Réponds en JSON avec les champs suivants: ' + schema
-    written = '\n\n'.join((blk.get('text') or '').strip() for blk in (chapter.get('blocks') or []) if (blk.get('text') or '').strip()) if chapter else ''
+    contexte = chapter_context(chapter) if chapter else None
+    if contexte and not contexte['text_complet']:
+        prompt += (' Attention : le texte du chapitre transmis est partiel (%d caractères sur %d). '
+                   'Ne prétends pas avoir lu la fin : signale-le dans `questions` et fonde ton analyse '
+                   'sur ce qui est fourni.' % (len(contexte['text']), contexte['text_longueur']))
     payload = dict(book=dict(title=book['title'], brief=book.get('brief',{}), plan=[dict(title=c['title'],purpose=c.get('purpose','')) for c in book['chapters']]),
-                   chapter=dict(title=chapter['title'],text=(written or chapter.get('notes',''))[:18000],notes=chapter.get('notes','')[:4000],
-                                purpose=chapter.get('purpose','')) if chapter else None,
+                   chapter=contexte,
                    instruction=str(data.get('instruction',''))[:3000], ideas=ideas, excerpts=evidence)
     cfg = app.settings()
     if progress:progress('generation',f'Génération avec {cfg["model"]}…',55)
@@ -185,7 +205,7 @@ def propose(studio, data, progress=None):
             if mode == 'draft' and not refs:raise ValueError('Un paragraphe sans source a été rejeté. Reformulez votre demande.')
             itemtext = str(item.get('title' if mode == 'plan' else 'text','')).strip()
             if not itemtext:raise ValueError('Proposition incomplète.')
-            clean.append(dict(title=itemtext[:500],purpose=str(item.get('purpose',''))[:2500],evidence_ids=refs) if mode=='plan' else dict(text=itemtext[:12000],evidence_ids=refs))
+            clean.append(dict(title=itemtext[:500],purpose=str(item.get('purpose',''))[:2500],evidence_ids=refs) if mode=='plan' else dict(text=itemtext[:MAX_PARAGRAPHE],evidence_ids=refs))
     questions=result.get('questions',[])
     if not isinstance(questions,list):questions=[str(questions)]
     return dict(mode=mode,book_id=book['_book_id'],revision=book['_revision'],chapter_id=chapter['id'] if chapter else None,

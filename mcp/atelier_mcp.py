@@ -145,6 +145,30 @@ def clip(text, limit=MAX_CHARS):
 # Une page de lecture reste nettement sous MAX_CHARS : l'enveloppe JSON et les métadonnées comptent aussi.
 MAX_PAGE = max(8000, MAX_CHARS // 2)
 
+# Un bloc de texte part ENTIER : au-delà de cette limite on refuse, on ne coupe jamais en silence.
+MAX_TEXTE_BLOC = int(os.environ.get("ATELIER_MAX_TEXTE_BLOC", "200000"))
+MAX_INTENTION = 6000  # limite imposée par l'Atelier pour chaque champ du brief
+
+
+def _texte_bloc(valeur, nom="text"):
+    """Texte transmis tel quel. Au-delà de MAX_TEXTE_BLOC : refus explicite, jamais de coupe muette."""
+    texte = str("" if valeur is None else valeur).strip()
+    if len(texte) > MAX_TEXTE_BLOC:
+        raise ApiError(
+            "%s fait %d caractères, au-delà de la limite d'un bloc (%d) : rien n'a été écrit. "
+            "Découpez-le en plusieurs paragraphes (un appel ajouter_texte_chapitre par section), "
+            "ou relevez ATELIER_MAX_TEXTE_BLOC." % (nom, len(texte), MAX_TEXTE_BLOC))
+    return texte
+
+
+def _entier(valeur, defaut, minimum=0, maximum=None):
+    try:
+        nombre = int(valeur)
+    except (TypeError, ValueError):
+        nombre = defaut
+    nombre = max(minimum, nombre)
+    return min(nombre, maximum) if maximum is not None else nombre
+
 
 def page_de(items, depuis, budget=MAX_PAGE, cout=None):
     """Page d'éléments à partir de `depuis`. Renvoie (indices, suite) ; suite vaut None quand tout est passé.
@@ -912,7 +936,11 @@ def definir_intention(args):
     brief = dict(book.get("brief") or {})
     for key in ("intention", "reader", "promise", "voice"):
         if args.get(key) is not None:
-            brief[key] = str(args[key])[:6000]
+            valeur = str(args[key])
+            if len(valeur) > MAX_INTENTION:
+                raise ApiError("Le champ %s fait %d caractères : l'Atelier en accepte %d au maximum. "
+                               "Rien n'a été écrit : raccourcissez ce texte." % (key, len(valeur), MAX_INTENTION))
+            brief[key] = valeur
     if not brief.get("intention"):
         raise ApiError("Le champ intention est obligatoire.")
     return api.call("PATCH", "/api/v1/books/%s" % book_id, body={"brief": brief})
@@ -951,7 +979,7 @@ def ajouter_texte_chapitre(args):
     args = args or {}
     book_id = str(args.get("book_id") or "book-main")
     chapter_id = str(args.get("chapter_id") or "").strip()
-    text = str(args.get("text") or "").strip()
+    text = _texte_bloc(args.get("text"))
     if not chapter_id or not text:
         raise ApiError("chapter_id et text sont requis.")
     source_ids = [str(x) for x in (args.get("source_ids") or [])]
@@ -961,9 +989,9 @@ def ajouter_texte_chapitre(args):
         if not chapter:
             raise ApiError("Chapitre introuvable : %s" % chapter_id)
         chapter.setdefault("blocks", []).append(dict(
-            id=uuid.uuid4().hex[:16], type="text", text=text[:50000], source_ids=source_ids))
+            id=uuid.uuid4().hex[:16], type="text", text=text, source_ids=source_ids))
         return dict(chapitre=chapter.get("title", ""), blocs=len(chapter["blocks"]),
-                    mots_ajoutes=len(text.split()))
+                    caracteres_ajoutes=len(text), mots_ajoutes=len(text.split()))
 
     return _chapters_with(book_id, mutate)
 
@@ -1058,9 +1086,9 @@ def remplacer_texte_chapitre(args):
         paragraphs = [args["text"]]
     if not isinstance(paragraphs, list) or not paragraphs:
         raise ApiError("paragraphs (liste de textes) requis, ou text pour un paragraphe unique.")
-    blocks = [dict(id=uuid.uuid4().hex[:16], type="text", text=str(p).strip()[:50000],
+    blocks = [dict(id=uuid.uuid4().hex[:16], type="text", text=_texte_bloc(p, "paragraphe %d" % rang),
                    source_ids=source_ids)
-              for p in paragraphs if str(p).strip()]
+              for rang, p in enumerate(paragraphs, 1) if str(p).strip()]
     if not blocks:
         raise ApiError("Aucun paragraphe exploitable.")
     keep_media = args.get("keep_media") is not False
@@ -1074,6 +1102,7 @@ def remplacer_texte_chapitre(args):
         chapter["blocks"] = [*blocks, *media]
         return dict(chapitre=chapter.get("title", ""), anciens_blocs=len(previous),
                     nouveaux_blocs=len(chapter["blocks"]),
+                    caracteres=sum(len(b["text"]) for b in blocks),
                     mots=sum(len(b["text"].split()) for b in blocks))
 
     return _chapters_with(book_id, mutate)
@@ -1310,14 +1339,22 @@ def synchroniser_bibliotheque(_=None):
 
 
 def historique_livre(args):
-    """Liste les versions enregistrées d'un livre, pour retrouver un état antérieur."""
+    """Liste les versions enregistrées d'un livre, pour retrouver un état antérieur (paginé)."""
     args = args or {}
     book_id = str(args.get("book_id") or "book-main")
+    depuis = _entier(args.get("depuis"), 0, 0)
+    limite = _entier(args.get("limite"), 50, 1, 500)
     versions = api.call("GET", "/api/history", {"book_id": book_id}) or []
-    return dict(livre=book_id, versions=[dict(id=v.get("id"), date=v.get("created"), label=v.get("label"),
-                                              changements=v.get("changes") or [])
-                                         for v in versions][:50],
-                suite="Restaurez-en une avec restaurer_version_livre (version_id).")
+    page = versions[depuis:depuis + limite]
+    suite = depuis + len(page)
+    return dict(livre=book_id, total=len(versions), depuis=depuis, rendu=len(page),
+                versions=[dict(id=v.get("id"), date=v.get("created"), label=v.get("label"),
+                               nombre_changements=len(v.get("changes") or []),
+                               changements=v.get("changes") or [])
+                          for v in page],
+                suite=suite if suite < len(versions) else None,
+                note="Texte avant/après d'une version : lire_version_livre(version_id). "
+                     "Restaurer : restaurer_version_livre(version_id).")
 
 
 def restaurer_version_livre(args):
@@ -1416,28 +1453,61 @@ def lister_modeles_ia(_=None):
 
 
 def lire_version_livre(args):
-    """Détail d'une version d'un livre : libellé, date, et diff mot à mot de chaque changement."""
+    """Détail d'une version : changements paginés avec texte avant/après, ou un chapitre tel qu'il était.
+
+    Les champs before/after ne sont plus jetés : ils sont rendus avec leur longueur réelle et un
+    drapeau `tronque`, donc l'appelant voit toujours s'il lit tout le texte. `chapitre` donne le
+    texte complet d'un chapitre tel qu'il existait dans cette version.
+    """
     args = args or {}
     vid = str(args.get("version_id") or args.get("id") or "").strip()
     if not vid:
         raise ApiError("version_id requis : obtenez-les avec historique_livre (champ id).")
     version = api.call("GET", "/api/version", {"id": vid})
-    changements = []
-    for change in version.get("changes") or []:
-        item = {}
-        for cle, valeur in change.items():
-            if cle in ("before", "after"):
+    book = version.get("book") or {}
+    plafond = _entier(args.get("plafond"), 20000, 1000, MAX_TEXTE_BLOC)
+    commun = dict(version_id=vid, book_id=version.get("book_id", ""), libelle=version.get("label", ""),
+                  cree=version.get("created", ""), sequence=version.get("seq", ""))
+
+    def texte(valeur):
+        brut = valeur if isinstance(valeur, str) else json.dumps(valeur, ensure_ascii=False)
+        return dict(texte=brut[:plafond], longueur=len(brut), tronque=len(brut) > plafond)
+
+    if args.get("chapitre") not in (None, ""):
+        chapitre, numero = trouver_chapitre(book.get("chapters") or [], args.get("chapitre"))
+        texte_chapitre = "\n\n".join((bloc.get("text") or "") for bloc in (chapitre.get("blocks") or [])
+                                     if bloc.get("type") in ("text", "heading", "quote") and bloc.get("text"))
+        return dict(commun, chapitre=dict(numero=numero, id=chapitre.get("id"), titre=chapitre.get("title", ""),
+                                         objectif=chapitre.get("purpose", ""),
+                                         blocs=len(chapitre.get("blocks") or []),
+                                         caracteres=len(texte_chapitre),
+                                         texte=clip(texte_chapitre, MAX_PAGE)),
+                    note="Texte du chapitre tel qu'il était dans cette version.")
+
+    changements = version.get("changes") or []
+    depuis = _entier(args.get("depuis"), 0, 0)
+    limite = _entier(args.get("limite"), 5, 1, 50)
+    page = changements[depuis:depuis + limite]
+    rendu = []
+    for change in page:
+        item = {cle: valeur for cle, valeur in change.items()
+                if cle not in ("before", "after", "diff") and not isinstance(valeur, (dict, list))}
+        for cle in ("before", "after", "diff"):
+            if cle not in change:
                 continue
             if cle == "diff":
-                item["diff"] = clip(str(valeur), 4000)
-            elif isinstance(valeur, (dict, list)):
-                item[cle] = clip(json.dumps(valeur, ensure_ascii=False), 1200)
+                diff = str(change.get("diff") or "")
+                item["diff"] = diff[:4000]
+                item["diff_longueur"] = len(diff)
+                item["diff_tronque"] = len(diff) > 4000
             else:
-                item[cle] = valeur
-        changements.append(item)
-    return dict(version_id=vid, book_id=version.get("book_id", ""), libelle=version.get("label", ""),
-                cree=version.get("created", ""), sequence=version.get("seq", ""),
-                changements=changements)
+                item["avant" if cle == "before" else "apres"] = texte(change[cle])
+        rendu.append(item)
+    suite = depuis + len(rendu)
+    return dict(commun, total_changements=len(changements), depuis=depuis, rendu=len(rendu),
+                changements=rendu, suite=suite if suite < len(changements) else None,
+                note="`suite` = indice du prochain changement. Pour le texte entier d'un chapitre "
+                     "tel qu'il était alors : relancer avec chapitre=<numero|titre|id>.")
 
 
 def lister_fichiers(_=None):
@@ -2021,11 +2091,16 @@ TOOLS = [
          inputSchema={"type": "object", "properties": {}},
          handler=lister_modeles_ia),
     dict(name="lire_version_livre",
-         description="Détail d'une version enregistrée d'un livre : libellé, date et diff mot à mot de chaque "
-                     "changement. Utile avant restaurer_version_livre pour voir ce qui a bougé.",
+         description="Détail d'une version enregistrée : chaque changement avec le texte avant/après et son diff, "
+                     "paginé. Avec `chapitre`, rend le texte complet de ce chapitre tel qu'il était dans cette "
+                     "version — le seul moyen de relire une ancienne rédaction hors ligne.",
          inputSchema={"type": "object", "properties": {
-             "version_id": {"type": "string", "description": "Identifiant de version donné par historique_livre."}},
-             "required": ["version_id"]},
+             "version_id": {"type": "string", "description": "Identifiant de version donné par historique_livre."},
+             "chapitre": {"type": "string", "description": "Numéro (1..N), titre ou id : rend son texte d'alors."},
+             "depuis": {"type": "integer", "description": "Indice du premier changement (0 par défaut)."},
+             "limite": {"type": "integer", "description": "Changements par page (défaut 5, max 50)."},
+             "plafond": {"type": "integer", "description": "Caractères par texte avant/après (défaut 20000)."}},
+             "required": ["version_id"], "additionalProperties": False},
          handler=lire_version_livre),
     dict(name="lister_fichiers",
          description="Médias de l'atelier : images (dont les couvertures possibles) et documents importés, "
@@ -2109,8 +2184,11 @@ TOOLS = [
          handler=definir_couverture_livre),
     dict(name="historique_livre",
          description="Lister les versions enregistrées d'un livre (date, libellé, changements) : chaque "
-                     "écriture en crée une. Sert à retrouver un état antérieur.",
-         inputSchema={"type": "object", "properties": {"book_id": {"type": "string", "description": "Défaut : book-main."}},
+                     "écriture en crée une. Paginé : `total`, puis `suite` à repasser en `depuis`.",
+         inputSchema={"type": "object", "properties": {
+             "book_id": {"type": "string", "description": "Défaut : book-main."},
+             "depuis": {"type": "integer", "description": "Indice de départ (0 = la plus récente)."},
+             "limite": {"type": "integer", "description": "Versions par page (défaut 50, max 500)."}},
              "additionalProperties": False},
          handler=historique_livre),
     dict(name="restaurer_version_livre",

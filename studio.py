@@ -6,6 +6,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 from defusedxml import ElementTree as ET
 from PIL import Image, ImageOps
 from book_markdown import render as render_markdown, pdf_flowables
+from editorial import MAX_PARAGRAPHE
 try:
     from pillow_heif import register_heif_opener
     register_heif_opener()
@@ -268,7 +269,9 @@ class Studio:
             linked=[]
             for item in kept:
                 refs=[evidence[r] for r in (item.get('evidence_ids') or []) if r in evidence]
-                chapter.setdefault('blocks',[]).append(dict(id=self.a.uid(),type='text',text=str(item.get('text',''))[:12000],source_ids=list(dict.fromkeys(r['source_id'] for r in refs if r.get('source_id')))))
+                texte_paragraphe=str(item.get('text',''))
+                if len(texte_paragraphe)>MAX_PARAGRAPHE:raise ValueError('Un paragraphe de la proposition fait %d caractères, au-delà de la limite (%d) : rien n\'a été ajouté.' % (len(texte_paragraphe),MAX_PARAGRAPHE))
+                chapter.setdefault('blocks',[]).append(dict(id=self.a.uid(),type='text',text=texte_paragraphe,source_ids=list(dict.fromkeys(r['source_id'] for r in refs if r.get('source_id')))))
                 linked+= [r['idea_id'] for r in refs if r.get('idea_id')]
             if linked:chapter['ideas']=list(dict.fromkeys([*(chapter.get('ideas') or []),*linked]))
         book['editorial_proposal']=dict(proposal,applied_at=self.a.now(),applied_count=len(kept))

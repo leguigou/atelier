@@ -22,11 +22,11 @@ jeton API Atelier suffisent.
 | `lister_livres` / `lire_livre` | projets de livre : intention, chapitres, état de rédaction |
 | `lire_chapitre` | le **texte** d'un chapitre, entier ou page par page (pagination explicite) |
 | `matieres_livre` | sources rattachées au projet, et celles citées dans les chapitres sans l'être |
-| `historique_livre` | versions datées d'un livre |
+| `historique_livre` | versions datées d'un livre, paginées (`total`, `depuis`, `limite`, `suite`) |
 | `exporter_livre` | le livre en Markdown (manuscrit ; les sources restent dans l'atelier) |
 | `verifier_export_livre` | l'export se génère bien (markdown, PDF ou EPUB) : taille du fichier produit |
 | `suivre_redaction` | état d'une préparation éditoriale et, si elle est prête, la proposition complète avec ses indices |
-| `lire_version_livre` | détail d'une version d'un livre : diff mot à mot de chaque changement |
+| `lire_version_livre` | détail d'une version : texte avant/après et diff de chaque changement, paginés ; avec `chapitre`, le texte de ce chapitre tel qu'il était alors |
 | `lister_fichiers` | médias de l'atelier : images (couvertures possibles) et documents |
 | `lire_reglages` / `lire_prompts_ia` / `lister_modeles_ia` | connexion IA, prompts des missions, modèles disponibles |
 
@@ -98,6 +98,7 @@ jamais passé par le client MCP, ni journalisé.
 | `ATELIER_TOKEN` | — | jeton `atelier_…` |
 | `ATELIER_TOKEN_FILE` | `atelier-token.txt` à côté du script | fichier contenant le jeton |
 | `ATELIER_MAX_CHARS` | `40000` | taille maximale d'une réponse d'outil |
+| `ATELIER_MAX_TEXTE_BLOC` | `200000` | taille maximale d'un bloc texte écrit (au-delà : refus explicite, jamais de coupe) |
 
 `atelier-token.txt` est ignoré par git : y déposer le jeton avec `chmod 600`.
 
@@ -238,6 +239,13 @@ sources, intention) et `lire_chapitre` sert le texte, page par page, avec un `su
 — `suite=null` signifie « chapitre lu en entier ». Même logique pour `lire_source` (transcriptions longues)
 et `lire_version_livre`. Règle : aucun outil de lecture ne coupe en silence ; quand il reste quelque chose,
 la réponse dit où reprendre.
+
+**Écrire un texte ne le coupe jamais non plus.** Un paragraphe part entier dans le manuscrit ; au-delà de
+`ATELIER_MAX_TEXTE_BLOC` (200 000 caractères) le serveur refuse et donne la longueur réelle, au lieu
+d'envoyer une version amputée. Même logique pour l'intention du livre (6 000 caractères par champ, limite
+de l'Atelier). Côté lecture, `lire_version_livre` rend le texte **avant/après** de chaque changement avec
+`longueur` et `tronque`, et `chapitre=<n°|titre|id>` restitue un chapitre tel qu'il était dans la version —
+de quoi relire une ancienne rédaction sans restaurer le livre.
 
 **Pilotage complet, sauf les secrets.** Tout ce que fait l'Atelier est accessible par l'API, et donc par
 le MCP : bibliothèque, idées, dossiers, livre, chapitres, matières, accompagnement éditorial, transcription,
