@@ -140,6 +140,12 @@ class WorkspaceTests(unittest.TestCase):
         self.assertIn('Mon texte original',out)
         self.assertIn('https://www.youtube.com/watch?v=dQTr8VInXUE&t=',out)
         self.assertIn('Bibliographie',out)
+    def test_export_does_not_repeat_chapter_text(self):
+        # `notes` mirrors the blocks; printing both duplicated every sentence and every chapter.
+        self.call('/api/book',dict(title='Essai sans doublon',_revision=app.studio.book()['_revision'],chapters=[dict(title='Chapitre unique',blocks=[dict(id='bx1',type='text',text='Une phrase qui ne doit apparaître qu’une fois.')])]))
+        out=app.export_book()
+        self.assertEqual(out.count('Une phrase qui ne doit apparaître qu’une fois.'),1)
+        self.assertEqual(out.count('## Chapitre unique'),1)
     def test_invalid_citation_rejected(self):
         with self.assertRaises(ValueError):app.save_idea(dict(title='Idée',refs=[dict(source_id='unknown',start=0,end=1)]))
         with self.assertRaises(ValueError):app.save_idea(dict(title='Idée',refs=[dict(source_id='dQTr8VInXUE',start=-1,end=1)]))

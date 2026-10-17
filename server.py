@@ -675,7 +675,12 @@ def export_book(book_id=None):
     lib=library(book_id); sources={s['id']:s for s in lib['sources']}; ideas={i['id']:i for i in lib['ideas']}
     out=['# '+lib['book']['title'],'','Dossier de travail — les propositions et déclarations restent à vérifier.','']
     for chapter in lib['book']['chapters']:
-        out+=['## '+chapter['title'],'',chapter.get('notes',''),'']
+        out+=['## '+chapter['title'],'']
+        # `notes` mirrors the blocks' text (validate_book recomputes it), so printing it here duplicated
+        # every sentence and every chapter. It only carries text for a legacy chapter without blocks.
+        blocs_texte=[b for b in chapter.get('blocks',[]) if b.get('type') in ('text','heading','quote') and (b.get('text') or '').strip()]
+        if not blocs_texte and chapter.get('notes'):
+            out+=[chapter.get('notes',''),'']
         for block in chapter.get('blocks',[]):
             text=block.get('text','');kind=block.get('type')
             if kind=='heading':out+=['### '+text,'']
